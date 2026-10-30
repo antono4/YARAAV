@@ -46,29 +46,7 @@ from .quarantine import Quarantine
 from .report import build_report
 from .scanner import ScanEngine
 from .settings import Settings
-
-# Palet warna. Semua pasangan teks/latar di bawah ini sudah dihitung memenuhi
-# WCAG AA (minimal 4,5:1), termasuk teks putih di atas tombol hijau:
-# #17694a -> 6,65:1 dan #1d7550 -> 5,66:1.
-COLORS = {
-    "bg": "#0f1720",
-    "panel": "#16212c",
-    "text": "#e6edf3",
-    "muted": "#93a4b3",
-    "accent": "#2f9e6f",
-    "danger": "#ff6b6b",
-    "warn": "#ffb454",
-    "note": "#7fb2ff",
-    "ok": "#3ddc97",
-    "fill": "#17694a",
-    "fill_active": "#1d7550",
-    "secondary": "#24313f",
-    "secondary_active": "#2e3f50",
-    "danger_fill": "#8c2f2f",
-    "danger_active": "#a33a3a",
-    "bar": "#2f9e6f",
-}
-
+from .theme import COLORS
 
 class ScanGuardApp:
     """Jendela utama."""
@@ -90,6 +68,10 @@ class ScanGuardApp:
         self.last_summary = None
         self.engine_status: list[dict] = []
         self._closed = False
+        # Tombol sidebar dan halaman yang sedang tampil. Dipakai untuk menandai
+        # menu yang aktif, seperti aplikasi desktop pada umumnya.
+        self.nav_buttons: dict[str, tk.Button] = {}
+        self.current_page = "beranda"
 
         self.db = HashDatabase()
         self.quarantine = Quarantine()
@@ -122,8 +104,8 @@ class ScanGuardApp:
 
     def _build_window(self) -> None:
         self.root.title(f"{APP_NAME} {APP_VERSION}")
-        self.root.geometry("1020x720")
-        self.root.minsize(880, 620)
+        self.root.geometry("1020x780")
+        self.root.minsize(900, 640)
         self.root.configure(bg=self.colors["bg"])
 
     def _set_window_icon(self) -> None:
@@ -146,58 +128,76 @@ class ScanGuardApp:
     # --------------------------------------------------------------- tata letak -- #
 
     def _build_ui(self) -> None:
-        self._build_header()
+        self._build_topbar()
 
-        body = tk.Frame(self.root, bg=self.colors["bg"], padx=16, pady=0)
-        body.pack(fill="both", expand=True)
+        # Tata letak gaya aplikasi keamanan: panel navigasi tetap di kiri,
+        # isi halaman di kanan. Panel kiri tidak ikut bergulir atau melebar
+        # saat jendela diperbesar, sehingga tombol-tombolnya selalu di tempat
+        # yang sama.
+        shell = tk.Frame(self.root, bg=self.colors["bg"])
+        shell.pack(fill="both", expand=True)
 
-        self._build_controls(body)
-        self._build_progress(body)
+        self._build_sidebar(shell)
+
+        main = tk.Frame(shell, bg=self.colors["bg"], padx=18, pady=14)
+        main.pack(side="left", fill="both", expand=True)
+
+        self._build_controls(main)
+        self._build_progress(main)
         # Footer dipasang dengan side="bottom" SEBELUM area log. Urutan ini
         # penting: widget yang memakai expand=True (area log) menyerap seluruh
         # ruang sisa, sehingga widget sesudahnya bisa terhimpit sampai tinggi
         # 1 piksel. Dengan dipasang lebih dulu di sisi bawah, footer selalu
         # mendapat tingginya dan area log yang mengisi sisanya.
-        self._build_footer(body)
-        self._build_log(body)
+        self._build_footer(main)
+        self._build_log(main)
 
-    def _build_header(self) -> None:
-        header = tk.Frame(self.root, bg=self.colors["bg"], padx=16, pady=14)
-        header.pack(fill="x")
+    def _build_topbar(self) -> None:
+        """Bilah atas: merek di kiri, keterangan basis data di kanan."""
+        topbar = tk.Frame(self.root, bg=self.colors["panel"])
+        topbar.pack(fill="x")
+
+        # Garis oranye setebal beberapa piksel di tepi atas. Ini satu-satunya
+        # tempat warna merek dipakai pada bidang besar, dan karena hanya garis
+        # (bukan teks) kontrasnya tidak perlu 4,5:1.
+        tk.Frame(topbar, bg=self.colors["brand"], height=3).pack(fill="x")
+
+        isi = tk.Frame(topbar, bg=self.colors["panel"], padx=16, pady=12)
+        isi.pack(fill="x")
 
         # Ikon perisai digambar dengan Canvas, bukan emoji: emoji tampil sebagai
         # kotak kosong di Windows yang tidak punya font emoji.
         canvas = tk.Canvas(
-            header,
-            width=44,
-            height=48,
-            bg=self.colors["bg"],
+            isi,
+            width=40,
+            height=44,
+            bg=self.colors["panel"],
             highlightthickness=0,
         )
         canvas.pack(side="left")
         self._draw_shield(canvas)
 
-        titles = tk.Frame(header, bg=self.colors["bg"])
+        titles = tk.Frame(isi, bg=self.colors["panel"])
         titles.pack(side="left", padx=(12, 0))
         tk.Label(
             titles,
-            text=f"{APP_NAME} {APP_VERSION}",
-            bg=self.colors["bg"],
+            text=APP_NAME,
+            bg=self.colors["panel"],
             fg=self.colors["text"],
             font=("Segoe UI", 16, "bold"),
         ).pack(anchor="w")
         tk.Label(
             titles,
             text=APP_TAGLINE,
-            bg=self.colors["bg"],
+            bg=self.colors["panel"],
             fg=self.colors["muted"],
             font=("Segoe UI", 9),
         ).pack(anchor="w")
 
         self.db_label = tk.Label(
-            header,
+            isi,
             text="",
-            bg=self.colors["bg"],
+            bg=self.colors["panel"],
             fg=self.colors["muted"],
             font=("Segoe UI", 9),
             justify="right",
@@ -205,65 +205,248 @@ class ScanGuardApp:
         self.db_label.pack(side="right")
         self.refresh_database_label()
 
-    def _draw_shield(self, canvas: tk.Canvas) -> None:
-        points = [22, 3, 41, 11, 41, 26, 22, 45, 3, 26, 3, 11]
-        canvas.create_polygon(
-            points, fill=self.colors["accent"], outline=self.colors["ok"], width=2
+        tk.Frame(topbar, bg=self.colors["border"], height=1).pack(fill="x")
+
+    def _build_sidebar(self, parent: tk.Frame) -> None:
+        """Panel navigasi kiri, seperti pada aplikasi keamanan umumnya."""
+        # Lebar 216 px memberi kelonggaran untuk label terpanjang
+        # ("Perbarui Basis Data"). Dengan 196 px label itu hanya bersisa 1 px,
+        # sehingga font yang sedikit lebih lebar - misalnya Segoe UI asli di
+        # Windows - akan memotongnya.
+        sidebar = tk.Frame(parent, bg=self.colors["sidebar"], width=216)
+        # pack_propagate(False) wajib: tanpa itu lebar panel mengikuti isinya,
+        # sehingga ukurannya berubah-ubah mengikuti panjang teks menu.
+        sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
+
+        isi = tk.Frame(sidebar, bg=self.colors["sidebar"], padx=10, pady=14)
+        isi.pack(fill="both", expand=True)
+
+        # Beranda adalah halaman yang benar-benar ditampilkan di panel kanan.
+        # Menu lain membuka jendela sendiri - sama seperti sebelumnya, tetapi
+        # kini tersusun rapi di satu tempat alih-alih berjejer di baris tombol.
+        menu = [
+            ("beranda", "Beranda", self.show_home),
+            ("pindai", "Pindai Cepat", self.choose_folder),
+            ("karantina", "Karantina", self.open_quarantine),
+            ("asisten", "Asisten AI", self.open_assistant),
+            ("pembaruan", "Perbarui Basis Data", self.open_update),
+            ("pengaturan", "Pengaturan", self.open_settings),
+        ]
+        for key, label, command in menu:
+            button = self._nav_button(isi, label, command, key)
+            button.pack(fill="x", pady=2)
+            self.nav_buttons[key] = button
+
+        # Keterangan kecil di kaki panel: mengingatkan sifat alat ini tanpa
+        # perlu dibuka di tengah halaman.
+        tk.Label(
+            isi,
+            text="Alat bantu pemeriksaan.\nBukan pengganti antivirus utama.",
+            bg=self.colors["sidebar"],
+            fg=self.colors["muted"],
+            font=("Segoe UI", 8),
+            justify="left",
+            anchor="w",
+            wraplength=190,
+        ).pack(side="bottom", fill="x", pady=(12, 0))
+
+        tk.Frame(parent, bg=self.colors["border"], width=1).pack(side="left", fill="y")
+        self._mark_active("beranda")
+
+    def _nav_button(self, parent, label: str, command, key: str) -> tk.Button:
+        """Tombol menu sidebar.
+
+        Status aktif ditandai warna sorotan, bukan sekadar diingat di dalam
+        variabel - pengguna harus bisa melihat halaman mana yang sedang dibuka.
+        """
+        return tk.Button(
+            parent,
+            text="  " + label,
+            command=command,
+            bg=self.colors["sidebar"],
+            fg=self.colors["sidebar_text"],
+            activebackground=self.colors["sidebar_hover"],
+            activeforeground=self.colors["sidebar_text"],
+            relief="flat",
+            bd=0,
+            anchor="w",
+            padx=12,
+            pady=9,
+            cursor="hand2",
+            font=("Segoe UI", 10),
         )
-        canvas.create_line(13, 24, 20, 31, 32, 17, fill="#ffffff", width=3, capstyle="round")
+
+    def _mark_active(self, key: str) -> None:
+        self.current_page = key
+        for name, button in self.nav_buttons.items():
+            if name == key:
+                button.configure(
+                    bg=self.colors["sidebar_active"],
+                    fg=self.colors["accent"],
+                    font=("Segoe UI", 10, "bold"),
+                )
+            else:
+                button.configure(
+                    bg=self.colors["sidebar"],
+                    fg=self.colors["sidebar_text"],
+                    font=("Segoe UI", 10),
+                )
+
+    def show_home(self) -> None:
+        """Kembali ke halaman utama dan tandai menunya aktif."""
+        self._mark_active("beranda")
+        self.root.focus_force()
 
     def _build_controls(self, parent: tk.Frame) -> None:
-        panel = tk.Frame(parent, bg=self.colors["panel"], padx=14, pady=12)
+        """Kartu utama: status perisai, tombol pindai besar, dan pemilih folder.
+
+        Susunannya meniru aplikasi keamanan pada umumnya: satu tombol besar di
+        tengah sebagai tindakan utama, dengan keterangan status di atasnya.
+        Tombol besar lebih mudah ditekan dan langsung menunjukkan apa yang
+        seharusnya dilakukan pengguna.
+        """
+        panel = tk.Frame(parent, bg=self.colors["panel"], padx=18, pady=12)
         panel.pack(fill="x")
 
-        row = tk.Frame(panel, bg=self.colors["panel"])
-        row.pack(fill="x")
+        # --- Baris status perisai ------------------------------------------- #
+        baris_status = tk.Frame(panel, bg=self.colors["panel"])
+        baris_status.pack(fill="x")
 
-        self.folder_var = tk.StringVar(value="Belum ada folder dipilih")
-        folder_label = tk.Label(
-            row,
-            textvariable=self.folder_var,
+        self.shield_canvas = tk.Canvas(
+            baris_status,
+            width=52,
+            height=56,
+            bg=self.colors["panel"],
+            highlightthickness=0,
+        )
+        self.shield_canvas.pack(side="left")
+        self._draw_shield(self.shield_canvas)
+
+        teks_status = tk.Frame(baris_status, bg=self.colors["panel"])
+        teks_status.pack(side="left", padx=(14, 0))
+
+        self.headline_var = tk.StringVar(value="Komputer belum diperiksa")
+        tk.Label(
+            teks_status,
+            textvariable=self.headline_var,
             bg=self.colors["panel"],
             fg=self.colors["text"],
-            font=("Segoe UI", 10),
+            font=("Segoe UI", 15, "bold"),
             anchor="w",
-        )
-        folder_label.pack(side="left", fill="x", expand=True)
+        ).pack(anchor="w")
 
-        self.choose_btn = self._button(row, "Pilih Folder", self.choose_folder)
+        self.subheadline_var = tk.StringVar(
+            value="Pilih folder, lalu jalankan pemindaian."
+        )
+        tk.Label(
+            teks_status,
+            textvariable=self.subheadline_var,
+            bg=self.colors["panel"],
+            fg=self.colors["muted"],
+            font=("Segoe UI", 9),
+            anchor="w",
+            justify="left",
+        ).pack(anchor="w", pady=(2, 0))
+
+        # --- Baris folder ---------------------------------------------------- #
+        baris_folder = tk.Frame(panel, bg=self.colors["panel"])
+        baris_folder.pack(fill="x", pady=(10, 0))
+
+        kotak_folder = tk.Frame(
+            baris_folder, bg=self.colors["bg"], padx=10, pady=8
+        )
+        kotak_folder.pack(side="left", fill="x", expand=True)
+
+        self.folder_var = tk.StringVar(value="Belum ada folder dipilih")
+        tk.Label(
+            kotak_folder,
+            textvariable=self.folder_var,
+            bg=self.colors["bg"],
+            fg=self.colors["text"],
+            font=("Consolas", 9),
+            anchor="w",
+        ).pack(fill="x")
+
+        self.choose_btn = self._button(baris_folder, "Pilih Folder", self.choose_folder)
         self.choose_btn.pack(side="left", padx=(10, 0))
 
-        self.scan_btn = self._button(
-            row, "Mulai Pindai", self.start_scan, primary=True
-        )
-        self.scan_btn.pack(side="left", padx=(8, 0))
+        # --- Tombol besar ---------------------------------------------------- #
+        baris_aksi = tk.Frame(panel, bg=self.colors["panel"])
+        baris_aksi.pack(fill="x", pady=(10, 0))
 
-        self.stop_btn = self._button(row, "Hentikan", self.stop_scan)
-        self.stop_btn.pack(side="left", padx=(8, 0))
+        self.scan_btn = tk.Button(
+            baris_aksi,
+            text="MULAI PINDAI",
+            command=self.start_scan,
+            bg=self.colors["fill"],
+            fg="#ffffff",
+            activebackground=self.colors["fill_active"],
+            activeforeground="#ffffff",
+            relief="flat",
+            bd=0,
+            padx=28,
+            pady=10,
+            cursor="hand2",
+            font=("Segoe UI", 12, "bold"),
+        )
+        self.scan_btn.pack(side="left", fill="x", expand=True)
+
+        self.stop_btn = self._button(baris_aksi, "Hentikan", self.stop_scan)
+        self.stop_btn.pack(side="left", padx=(10, 0))
         self.stop_btn.configure(state="disabled")
 
-        # Baris kedua: pengaturan dan alat bantu.
-        row2 = tk.Frame(panel, bg=self.colors["panel"])
-        row2.pack(fill="x", pady=(10, 0))
+        # --- Alat bantu ------------------------------------------------------ #
+        baris_alat = tk.Frame(panel, bg=self.colors["panel"])
+        baris_alat.pack(fill="x", pady=(10, 0))
         for text, command in (
-            ("Pengaturan", self.open_settings),
-            ("Perbarui Basis Data", self.open_update),
-            ("Karantina", self.open_quarantine),
-            ("Tanya AI", self.open_assistant),
             ("Simpan Laporan", self.save_report),
             ("Bersihkan Log", self.clear_log),
         ):
-            self._button(row2, text, command).pack(side="left", padx=(0, 8))
+            self._button(baris_alat, text, command).pack(side="left", padx=(0, 8))
+
+    def _draw_shield(self, canvas: tk.Canvas, outline: str | None = None) -> None:
+        """Gambar perisai di kanvas.
+
+        Digambar sebagai vektor, bukan emoji: emoji tampil sebagai kotak kosong
+        di Windows yang tidak punya font emoji, dan tidak bisa diwarnai.
+        """
+        w = canvas.winfo_reqwidth()
+        h = canvas.winfo_reqheight()
+        tengah = w / 2
+        points = [
+            tengah, 3,
+            w - 4, h * 0.22,
+            w - 4, h * 0.55,
+            tengah, h - 3,
+            4, h * 0.55,
+            4, h * 0.22,
+        ]
+        canvas.create_polygon(
+            points,
+            fill=self.colors["brand"],
+            outline=outline or self.colors["accent"],
+            width=2,
+        )
+        canvas.create_line(
+            tengah - 8, h * 0.5,
+            tengah - 2, h * 0.6,
+            tengah + 9, h * 0.36,
+            fill="#ffffff",
+            width=3,
+            capstyle="round",
+            joinstyle="round",
+        )
 
     def _build_progress(self, parent: tk.Frame) -> None:
-        wrapper = tk.Frame(parent, bg=self.colors["bg"], pady=10)
-        wrapper.pack(fill="x")
+        wrapper = tk.Frame(parent, bg=self.colors["panel"], padx=18, pady=10)
+        wrapper.pack(fill="x", pady=(10, 0))
 
         self.status_var = tk.StringVar(value="Siap. Pilih folder lalu tekan Mulai Pindai.")
         tk.Label(
             wrapper,
             textvariable=self.status_var,
-            bg=self.colors["bg"],
+            bg=self.colors["panel"],
             fg=self.colors["text"],
             font=("Segoe UI", 10),
             anchor="w",
@@ -276,9 +459,9 @@ class ScanGuardApp:
             pass
         style.configure(
             "SG.Horizontal.TProgressbar",
-            troughcolor=self.colors["panel"],
+            troughcolor=self.colors["trough"],
             background=self.colors["bar"],
-            bordercolor=self.colors["panel"],
+            bordercolor=self.colors["trough"],
             lightcolor=self.colors["bar"],
             darkcolor=self.colors["bar"],
             thickness=14,
@@ -295,32 +478,34 @@ class ScanGuardApp:
         tk.Label(
             wrapper,
             textvariable=self.counter_var,
-            bg=self.colors["bg"],
+            bg=self.colors["panel"],
             fg=self.colors["muted"],
             font=("Segoe UI", 9),
             anchor="w",
         ).pack(fill="x", pady=(4, 0))
 
     def _build_log(self, parent: tk.Frame) -> None:
-        wrapper = tk.Frame(parent, bg=self.colors["bg"])
+        wrapper = tk.Frame(parent, bg=self.colors["panel"], padx=18, pady=10)
         # expand=True: area log mengisi seluruh sisa ruang di bawah footer.
-        wrapper.pack(fill="both", expand=True)
+        wrapper.pack(fill="both", expand=True, pady=(10, 0))
 
         tk.Label(
             wrapper,
             text="Hasil pemindaian",
-            bg=self.colors["bg"],
+            bg=self.colors["panel"],
             fg=self.colors["muted"],
-            font=("Segoe UI", 9),
+            font=("Segoe UI", 9, "bold"),
             anchor="w",
-        ).pack(fill="x", pady=(0, 4))
+        ).pack(fill="x", pady=(0, 6))
 
-        holder = tk.Frame(wrapper, bg=self.colors["panel"])
+        # Kotak log diberi latar agak berbeda dari kartunya supaya batas area
+        # yang bisa digulir terlihat jelas di tema terang.
+        holder = tk.Frame(wrapper, bg=self.colors["bg"])
         holder.pack(fill="both", expand=True)
 
         self.log = tk.Text(
             holder,
-            bg=self.colors["panel"],
+            bg=self.colors["bg"],
             fg=self.colors["text"],
             insertbackground=self.colors["text"],
             relief="flat",
@@ -354,10 +539,10 @@ class ScanGuardApp:
         self.log.bind("<<Cut>>", lambda _e: "break")
 
     def _build_footer(self, parent: tk.Frame) -> None:
-        footer = tk.Frame(parent, bg=self.colors["bg"])
+        footer = tk.Frame(parent, bg=self.colors["bg"], padx=4)
         # Jarak atas/bawah diberikan lewat pack(), bukan lewat Frame: pady pada
         # Frame Tk hanya menerima satu angka, tidak menerima pasangan.
-        footer.pack(side="bottom", fill="x", pady=(6, 10))
+        footer.pack(side="bottom", fill="x", pady=(10, 2))
 
         # wraplength membuat teks membungkus ke baris berikutnya, bukan
         # terpotong di tepi jendela saat jendela dipersempit.
@@ -477,6 +662,7 @@ class ScanGuardApp:
             return
 
         self.scanning = True
+        self._mark_active("pindai")
         self.stop_event = threading.Event()
         self.scan_btn.configure(state="disabled")
         self.choose_btn.configure(state="disabled")
@@ -616,11 +802,22 @@ class ScanGuardApp:
 
         if summary.findings:
             self._append_log(f"Temuan: {len(summary.findings)}\n")
-            self._append_log(
-                f"  MALWARE: {summary.infected}   "
-                f"MENCURIGAKAN: {summary.suspicious}   "
-                f"PERLU DIPERIKSA: {summary.notes}\n"
-            )
+            # Angka ringkasan diberi warna per tingkat. Baris ini selalu
+            # berada di dasar log yang terlihat, jadi warna tingkat bahaya
+            # tetap terbaca tanpa perlu menggulir ke atas.
+            self._append_log("  ")
+            for label, jumlah, severity in (
+                ("MALWARE", summary.infected, SEV_MALWARE),
+                ("MENCURIGAKAN", summary.suspicious, SEV_SUSPICIOUS),
+                ("PERLU DIPERIKSA", summary.notes, SEV_NOTE),
+            ):
+                self._append_log(
+                    f"{label}: {jumlah}",
+                    SEVERITY_TAGS[severity],
+                )
+                if severity != SEV_NOTE:
+                    self._append_log("   ")
+            self._append_log("\n")
         else:
             self._append_log(
                 "Tidak ada temuan. Catatan: ini bukan jaminan berkas pasti aman.\n",
@@ -641,7 +838,61 @@ class ScanGuardApp:
         )
         self.counter_var.set("")
 
+        # Perbarui kartu status supaya hasil pemindaian langsung terbaca tanpa
+        # harus menggulir log.
+        if summary.stopped:
+            self._set_status_card(
+                "Pemindaian dihentikan",
+                "Sebagian berkas belum diperiksa. Jalankan ulang untuk memeriksa semuanya.",
+                "note",
+            )
+        elif summary.infected:
+            self._set_status_card(
+                f"Ditemukan {summary.infected} berkas berbahaya",
+                f"{summary.suspicious} mencurigakan, {summary.notes} perlu diperiksa. "
+                "Pindahkan yang berbahaya ke karantina.",
+                "danger",
+            )
+        elif summary.suspicious or summary.notes:
+            self._set_status_card(
+                f"Ditemukan {summary.suspicious + summary.notes} berkas patut diperiksa",
+                "Tidak ada yang pasti berbahaya, tetapi ada yang menyimpang dari biasanya.",
+                "warn",
+            )
+        else:
+            self._set_status_card(
+                "Tidak ada temuan",
+                "Tidak ada yang cocok dengan basis data atau aturan. "
+                "Ini bukan jaminan semua berkas aman.",
+                "ok",
+            )
+
+        # Hasil ditampilkan di halaman utama, jadi sorotan panel kiri
+        # dikembalikan ke Beranda. Tanpa ini, menu "Pindai Cepat" tetap
+        # tersorot padahal yang terlihat di layar adalah halaman Beranda.
+        self._mark_active("beranda")
+
         self._offer_quarantine(summary)
+
+    def _set_status_card(self, judul: str, keterangan: str, nada: str) -> None:
+        """Ubah teks dan warna kartu status.
+
+        `nada` memilih warna dari palet tingkat bahaya supaya kartu ini memakai
+        warna yang sama dengan baris log untuk tingkat yang sama - pengguna tidak
+        perlu mempelajari dua arti warna yang berbeda.
+        """
+        self.headline_var.set(judul)
+        self.subheadline_var.set(keterangan)
+        # Warna perisai: isian memakai warna merek (hanya isian, bukan teks),
+        # garisnya memakai warna nada supaya tingkatnya tetap terbaca.
+        warna_garis = {
+            "danger": self.colors["danger"],
+            "warn": self.colors["warn"],
+            "ok": self.colors["ok"],
+            "note": self.colors["note"],
+        }.get(nada, self.colors["accent"])
+        self.shield_canvas.delete("all")
+        self._draw_shield(self.shield_canvas, outline=warna_garis)
 
     def _render_error(self, message: str) -> None:
         self.scanning = False

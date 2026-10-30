@@ -2,7 +2,9 @@
 
 Program pemindai malware dengan antarmuka grafis, ditulis dengan Python dan
 tkinter, yang bisa dikompilasi menjadi satu file `.exe` lalu dibungkus menjadi
-installer `setup.exe`.
+installer `setup.exe`. Tampilannya mengikuti gaya aplikasi keamanan pada
+umumnya: tema terang, panel navigasi di kiri, dan satu tombol pindai besar
+sebagai tindakan utama.
 
 Program ini **benar-benar memeriksa berkas**, memakai empat mesin deteksi ditambah
 dua bagian kecerdasan buatan yang bekerja berdampingan:
@@ -25,8 +27,9 @@ berkas berkedok ganda, dan satu berkas program besar. Jadi warna MALWARE,
 MENCURIGAKAN, dan PERLU DIPERIKSA di gambar muncul karena mesinnya memang
 mendeteksi, bukan karena lognya disunting.
 
-**Jendela utama setelah pemindaian.** Warna per tingkat bahaya, bilah kemajuan,
-dan daftar mesin yang ikut bekerja:
+**Jendela utama setelah pemindaian.** Kartu status di atas meringkas hasilnya
+(perisai berubah warna sesuai tingkat terburuk), tombol pindai besar di tengah,
+dan log berwarna per tingkat bahaya di bawah. Panel kiri berisi navigasi:
 
 ![Jendela utama ScanGuard setelah pemindaian](docs/tangkapan-jendela-utama.png)
 
@@ -115,10 +118,12 @@ deteksinya berkurang. Keterangan penyebabnya tercetak tepat di bawahnya.
 
 ## 2. Cara memakai programnya
 
-1. **Pilih Folder** — tentukan folder yang ingin diperiksa.
-2. **Mulai Pindai** — pemindaian berjalan di latar belakang. Jendela tetap bisa
-   digeser dan digulir selama proses berjalan; ini karena pemindaian berjalan di
-   thread terpisah dan hasilnya dikirim ke jendela lewat antrean.
+1. **Pilih Folder** — tentukan folder yang ingin diperiksa. Tombol ini ada di
+   kartu utama, dan bisa juga lewat menu **Pindai Cepat** di panel kiri.
+2. **MULAI PINDAI** — tombol besar di tengah kartu utama. Pemindaian berjalan di
+   latar belakang. Jendela tetap bisa digeser dan digulir selama proses
+   berjalan; ini karena pemindaian berjalan di thread terpisah dan hasilnya
+   dikirim ke jendela lewat antrean.
 3. **Hentikan** — menghentikan pemindaian dengan rapi (berkas yang sedang
    diperiksa diselesaikan lebih dulu).
 4. Setelah selesai, program menawarkan memindahkan temuan **MALWARE** ke
@@ -126,10 +131,19 @@ deteksinya berkurang. Keterangan penyebabnya tercetak tepat di bawahnya.
    dijalankan, tetapi masih bisa dipulihkan utuh kapan saja.
 5. **Simpan Laporan** — menyimpan hasil lengkap ke berkas teks, termasuk hash
    dan daftar mesin yang menemukan apa.
-6. **Tanya AI** — membuka jendela asisten: tanyakan kenapa sebuah berkas
+6. **Asisten AI** (panel kiri) — membuka jendela asisten: tanyakan kenapa sebuah berkas
    ditandai, apa arti sebuah temuan, atau apa yang sebaiknya dilakukan.
    Tanpa kunci API ia menjawab dari penjelasan bawaan program; dengan kunci API
    pertanyaan bebas diteruskan ke model. Rinciannya di bagian 6.
+
+Panel kiri juga memuat **Karantina**, **Perbarui Basis Data**, dan
+**Pengaturan**. Menu yang sedang dibuka ditandai dengan sorotan oranye, jadi
+selalu terlihat di mana Anda berada.
+
+Setelah pemindaian selesai, kartu status di bagian atas berubah: perisainya
+berwarna merah bila ada MALWARE, kuning bila hanya ada temuan yang patut
+diperiksa, dan hijau bila bersih. Warnanya sama dengan warna baris di log,
+sehingga satu warna punya satu arti di seluruh program.
 
 ### Tiga tingkat temuan
 

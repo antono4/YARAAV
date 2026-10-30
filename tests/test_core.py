@@ -1089,6 +1089,38 @@ class TestGui(TempCase):
             with self.subTest(button=button.cget("text")):
                 self.assertGreaterEqual(button.winfo_width(), button.winfo_reqwidth())
 
+    def test_sidebar_menu_labels_are_not_truncated(self) -> None:
+        """Label menu harus muat utuh, termasuk di ukuran jendela minimum.
+
+        Label yang terpotong tetap "ada" di pohon widget, jadi keberadaannya
+        saja tidak cukup - lebarnya harus dibandingkan dengan yang dibutuhkan.
+        Label terpanjang sengaja diberi kelonggaran lebar: di Windows fontnya
+        Segoe UI asli, yang sedikit lebih lebar daripada font pengganti di Linux.
+        """
+        self.root.geometry("900x640")
+        self.root.update()
+        self.assertTrue(self.app.nav_buttons, "sidebar tidak punya tombol menu")
+        for key, button in self.app.nav_buttons.items():
+            with self.subTest(menu=key):
+                self.assertGreaterEqual(
+                    button.winfo_width(),
+                    button.winfo_reqwidth(),
+                    f"label menu '{button.cget('text').strip()}' terpotong",
+                )
+
+    def test_sidebar_marks_the_active_page(self) -> None:
+        """Menu yang sedang dibuka harus terlihat berbeda, bukan hanya diingat."""
+        self.root.update()
+        self.app._mark_active("karantina")
+        aktif = self.app.nav_buttons["karantina"]
+        lain = self.app.nav_buttons["beranda"]
+        self.assertNotEqual(
+            aktif.cget("bg"), lain.cget("bg"), "menu aktif tidak dibedakan warnanya"
+        )
+        self.assertEqual(self.app.current_page, "karantina")
+        # Kembali ke beranda supaya pengujian lain tidak terpengaruh.
+        self.app._mark_active("beranda")
+
     def test_closing_window_cancels_scheduled_callback(self) -> None:
         """Menutup jendela tidak boleh meninggalkan callback terjadwal.
 
@@ -1430,3 +1462,48 @@ class TestReadmeImages(unittest.TestCase):
     def _read(self, parts) -> str:
         with open(os.path.join(self.ROOT, *parts), encoding="utf-8") as handle:
             return handle.read()
+
+
+class TestFillOnlyColours(unittest.TestCase):
+    """Warna merek tidak boleh dipakai sebagai warna teks.
+
+    Oranye merek (#ff6b00) hanya punya kontras 2,86:1 di atas putih - kurang
+    dari separuh ambang teks yang terbaca. Warnanya bagus untuk garis dan
+    isian, tetapi begitu dipakai sebagai `fg`, tulisannya jadi sulit dibaca.
+    Kesalahan seperti ini tidak terlihat dari uji kontras biasa, karena uji itu
+    hanya memeriksa pasangan warna yang didaftarkan - bukan pemakaiannya di
+    dalam kode.
+    """
+
+    ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def test_fill_only_colours_are_never_used_as_text(self) -> None:
+        import re
+
+        from scanguard.theme import FILL_ONLY_KEYS
+
+        # Tk mewarnai teks lewat `fg=` atau `foreground=` (juga varian
+        # `activefg` / `activeforeground`). Keduanya harus ikut diperiksa:
+        # versi pertama uji ini hanya menangkap `foreground=` sehingga
+        # pelanggaran yang memakai `fg=` lolos tanpa terdeteksi.
+        pola = re.compile(
+            r"(?:active)?(?:fg|foreground)\s*=\s*[^,\n]*"
+            r"\[\s*[\"']([a-z_]+)[\"']\s*\]"
+        )
+        berkas = []
+        for folder, _dirs, nama_nama in os.walk(os.path.join(self.ROOT, "scanguard")):
+            berkas += [os.path.join(folder, n) for n in nama_nama if n.endswith(".py")]
+        self.assertTrue(berkas, "tidak menemukan berkas sumber untuk diperiksa")
+
+        pelanggaran = []
+        for path in berkas:
+            with open(path, encoding="utf-8") as handle:
+                for nomor, baris in enumerate(handle, 1):
+                    for kunci in pola.findall(baris):
+                        if kunci in FILL_ONLY_KEYS:
+                            pelanggaran.append(f"{os.path.basename(path)}:{nomor} -> {kunci}")
+        self.assertEqual(
+            pelanggaran,
+            [],
+            "warna khusus isian dipakai sebagai warna teks: " + ", ".join(pelanggaran),
+        )
