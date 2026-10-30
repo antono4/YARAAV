@@ -959,6 +959,11 @@ class TestSettings(TempCase):
 # --------------------------------------------------------------------------- #
 
 
+def log_file(data_dir: str) -> str:
+    """Lokasi berkas catatan pemantauan latar belakang di folder data tertentu."""
+    return os.path.join(data_dir, "pemantauan.log")
+
+
 def _safe_close(app, root: tk.Tk) -> None:
     """Batalkan callback terjadwal lalu hancurkan jendela.
 
@@ -1793,6 +1798,277 @@ class TestRealtimeGui(TempCase):
         self.app._closed = True
         self.p1.stop()
         self.p2.stop()
+
+
+class TestAutostart(unittest.TestCase):
+    """Mulai otomatis saat Windows menyala.
+
+    Di Linux (tempat pengujian ini berjalan) registry Windows tidak ada, jadi
+    yang bisa diuji di sini adalah perilaku amannya: setiap fungsi harus
+    mengembalikan "tidak didukung" tanpa melempar kesalahan. Kalau salah satu
+    melempar, program akan mati saat dibuka di Linux - dan itu justru lebih
+    buruk daripada fiturnya tidak tersedia.
+
+    Perilaku di Windows diuji dengan registry palsu di bawah, sehingga
+    jalan kodenya benar-benar dijalankan, bukan hanya dilewati.
+    """
+
+    def test_every_function_is_safe_without_windows(self) -> None:
+        from scanguard import autostart
+
+        if autostart.is_supported():
+            self.skipTest("pengujian ini untuk sistem tanpa registry Windows")
+        self.assertFalse(autostart.is_enabled())
+        ok, pesan = autostart.enable()
+        self.assertFalse(ok)
+        self.assertIn("Windows", pesan)
+        ok, pesan = autostart.disable()
+        self.assertFalse(ok)
+        self.assertIn("Windows", pesan)
+
+    def test_launch_command_always_requests_background_mode(self) -> None:
+        """Perintah mulai otomatis wajib memakai --rtp.
+
+        Tanpa itu, jendela lebar akan terbuka sendiri setiap kali pengguna
+        menyalakan komputer. Jendela seperti itu akan segera ditutup, dan
+        setelah ditutup pemantauannya ikut mati - jadi fiturnya jadi sia-sia.
+        """
+        from scanguard import autostart
+
+        perintah = autostart.launch_command()
+        self.assertIn("--rtp", perintah)
+
+    def test_registry_round_trip_with_a_fake_registry(self) -> None:
+        """enable/disable benar-benar menulis dan menghapus nilai registry.
+
+        Registry palsu dipakai supaya jalan kodenya dijalankan sungguhan di
+        Linux. Tanpa ini, seluruh logika Windows tidak pernah diuji sama sekali
+        sampai ada pengguna Windows yang melaporkan masalahnya.
+        """
+        import types
+
+        from scanguard import autostart
+
+        registry: dict[tuple[str, str], str] = {}
+
+        class FakeKey:
+            def __init__(self, root, path) -> None:
+                self.path = path
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc) -> bool:
+                return False
+
+        winreg = types.ModuleType("winreg")
+        winreg.HKEY_CURRENT_USER = object()
+        winreg.REG_SZ = 1
+        winreg.KEY_SET_VALUE = 2
+
+        def OpenKey(root, path, reserved=0, access=0):
+            if not any(k[0] == path for k in registry):
+                raise FileNotFoundError(path)
+            return FakeKey(root, path)
+
+        def CreateKeyEx(root, path, reserved=0, access=0):
+            return FakeKey(root, path)
+
+        def QueryValueEx(key, name):
+            kunci = (key.path, name)
+            if kunci not in registry:
+                raise FileNotFoundError(name)
+            return registry[kunci], winreg.REG_SZ
+
+        def SetValueEx(key, name, reserved, tipe, nilai):
+            registry[(key.path, name)] = nilai
+
+        def DeleteValue(key, name):
+            kunci = (key.path, name)
+            if kunci not in registry:
+                raise FileNotFoundError(name)
+            del registry[kunci]
+
+        winreg.OpenKey = OpenKey
+        winreg.CreateKeyEx = CreateKeyEx
+        winreg.QueryValueEx = QueryValueEx
+        winreg.SetValueEx = SetValueEx
+        winreg.DeleteValue = DeleteValue
+
+        with mock.patch.dict(sys.modules, {"winreg": winreg}), mock.patch.object(
+            autostart, "is_supported", return_value=True
+        ):
+            self.assertFalse(autostart.is_enabled(), "awalnya belum aktif")
+
+            ok, pesan = autostart.enable()
+            self.assertTrue(ok, pesan)
+            self.assertIn("--rtp", registry[(autostart.RUN_KEY, autostart.VALUE_NAME)])
+            self.assertTrue(autostart.is_enabled(), "nilai registry tidak terbaca")
+
+            ok, pesan = autostart.disable()
+            self.assertTrue(ok, pesan)
+            self.assertFalse(autostart.is_enabled(), "nilai registry masih ada")
+
+            # Mematikan yang sudah mati harus berhasil, bukan gagal: hasil
+            # akhirnya sama, dan pengguna tidak perlu diberi kesalahan.
+            ok, _pesan = autostart.disable()
+            self.assertTrue(ok, "mematikan dua kali seharusnya aman")
+
+
+class TestBackgroundWatcher(TempCase):
+    """Pemantauan tanpa jendela, dipakai oleh mulai otomatis."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.pantau = os.path.join(self.tmp, "pantau")
+        os.makedirs(self.pantau, exist_ok=True)
+        self.data = os.path.join(self.tmp, "data")
+        os.makedirs(self.data, exist_ok=True)
+        self._old = os.environ.get("SCANGUARD_DATA_DIR")
+        os.environ["SCANGUARD_DATA_DIR"] = self.data
+        self.addCleanup(self._restore)
+
+    def _restore(self) -> None:
+        if self._old is None:
+            os.environ.pop("SCANGUARD_DATA_DIR", None)
+        else:
+            os.environ["SCANGUARD_DATA_DIR"] = self._old
+
+    def _watcher(self):
+        from scanguard.background import BackgroundWatcher
+        from scanguard.settings import Settings
+
+        settings = Settings()
+        settings.rtp_folders = [self.pantau]
+        settings.rtp_interval = 0.2
+        settings.use_clamav = False
+        return BackgroundWatcher(settings)
+
+    def test_without_folders_it_declines_instead_of_crashing(self) -> None:
+        """Tanpa folder pantauan harus menolak dengan jelas, bukan diam-diam."""
+        from scanguard.background import BackgroundWatcher
+        from scanguard.settings import Settings
+
+        settings = Settings()
+        settings.rtp_folders = []
+        watcher = BackgroundWatcher(settings)
+        self.assertFalse(watcher.start(), "seharusnya menolak tanpa folder")
+        isi = open(log_file(self.data)).read()
+        self.assertIn("folder pantauan", isi)
+
+    def test_findings_are_written_to_the_log_file(self) -> None:
+        """Temuan harus tercatat ke berkas, karena tidak ada jendela untuk menampilkannya."""
+        watcher = self._watcher()
+        self.assertTrue(watcher.start(), "pemantauan gagal dinyalakan")
+        self.addCleanup(watcher.stop)
+
+        path = os.path.join(self.pantau, "jahat.bat")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("@echo off\r\nvssadmin delete shadows /all /quiet\r\n")
+
+        deadline = time.time() + 20
+        isi = ""
+        while time.time() < deadline:
+            if os.path.exists(log_file(self.data)):
+                isi = open(log_file(self.data)).read()
+                if "PANTAU" in isi:
+                    break
+            time.sleep(0.1)
+        self.assertIn("PANTAU", isi, "temuan tidak tercatat ke berkas")
+        self.assertIn("vssadmin", isi.lower(), "isi temuan tidak ikut tercatat")
+        self.assertIn(time.strftime("%Y"), isi, "stempel waktu tidak ada")
+
+    def test_clean_files_are_not_logged_unless_asked(self) -> None:
+        """Folder ramai berkas bersih tidak boleh memenuhi catatan."""
+        watcher = self._watcher()
+        self.assertTrue(watcher.start())
+        self.addCleanup(watcher.stop)
+        with open(os.path.join(self.pantau, "biasa.txt"), "w") as handle:
+            handle.write("catatan biasa\n" * 20)
+        time.sleep(1.5)
+        isi = open(log_file(self.data)).read() if os.path.exists(log_file(self.data)) else ""
+        self.assertNotIn("biasa.txt", isi, "berkas bersih ikut dicatat")
+
+    def test_malware_is_quarantined_only_when_asked(self) -> None:
+        """Karantina otomatis di latar belakang harus ikut pilihan pengguna."""
+        watcher = self._watcher()
+        watcher.settings.rtp_auto_quarantine = True
+        self.assertTrue(watcher.start())
+        self.addCleanup(watcher.stop)
+        path = os.path.join(self.pantau, "jahat.bat")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("@echo off\r\nvssadmin delete shadows /all /quiet\r\n")
+
+        deadline = time.time() + 25
+        while time.time() < deadline and os.path.exists(path):
+            time.sleep(0.2)
+        self.assertFalse(os.path.exists(path), "berkas tidak dipindahkan ke karantina")
+        self.assertTrue(watcher.quarantine.active_entries(), "karantina kosong")
+
+
+class TestRtpPersistence(TempCase):
+    """Pilihan perlindungan waktu nyata harus bertahan antar sesi.
+
+    Sebelum ini, rtp_enabled disimpan di pengaturan tetapi tidak pernah dibaca
+    maupun ditulis. Akibatnya pengguna menyalakan RTP, menutup program, dan
+    perlindungannya hilang tanpa pemberitahuan - perlindungan waktu nyata yang
+    lupa keadaannya saat komputer di-restart bukan perlindungan.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        try:
+            self.root, self.app, self.p1, self.p2 = _make_app()
+        except tk.TclError as error:
+            self.skipTest(f"tkinter tidak bisa membuka jendela: {error}")
+        self.addCleanup(self.p2.stop)
+        self.addCleanup(self.p1.stop)
+        self.addCleanup(_safe_close, self.app, self.root)
+        self.pantau = os.path.join(self.tmp, "pantau")
+        os.makedirs(self.pantau, exist_ok=True)
+
+    def test_starting_and_stopping_saves_the_choice(self) -> None:
+        from scanguard.settings import Settings
+
+        self.app.settings.rtp_folders = [self.pantau]
+        self.assertFalse(self.app.settings.rtp_enabled, "bawaannya harus mati")
+
+        self.assertTrue(self.app.start_rtp())
+        self.addCleanup(self.app.stop_rtp)
+        self.assertTrue(self.app.settings.rtp_enabled, "menyalakan tidak tersimpan")
+        self.assertTrue(Settings.load().rtp_enabled, "tidak tersimpan ke berkas")
+
+        self.app.stop_rtp()
+        self.assertFalse(self.app.settings.rtp_enabled, "mematikan tidak tersimpan")
+        self.assertFalse(Settings.load().rtp_enabled, "tidak tersimpan ke berkas")
+
+    def test_rtp_is_not_resumed_when_the_user_left_it_off(self) -> None:
+        """Program tidak boleh menyalakan pemantauan yang tidak diminta."""
+        self.app.settings.rtp_enabled = False
+        self.app.settings.rtp_folders = [self.pantau]
+        self.app._resume_rtp_if_enabled()
+        self.assertIsNone(self.app.rtp, "pemantauan menyala padahal tidak diminta")
+
+    def test_rtp_is_resumed_when_the_user_left_it_on(self) -> None:
+        self.app.settings.rtp_enabled = True
+        self.app.settings.rtp_folders = [self.pantau]
+        self.app._resume_rtp_if_enabled()
+        self.addCleanup(self.app.stop_rtp)
+        self.assertIsNotNone(self.app.rtp, "pemantauan tidak dilanjutkan")
+        self.assertTrue(self.app.rtp.running, "pemantauan tidak berjalan")
+
+    def test_missing_folder_is_reported_instead_of_crashing(self) -> None:
+        """Folder yang sudah dihapus tidak boleh membuat program gagal dibuka."""
+        self.app.settings.rtp_enabled = True
+        self.app.settings.rtp_folders = [os.path.join(self.tmp, "tidak-ada")]
+        self.app.clear_log()
+        self.app._resume_rtp_if_enabled()
+        self.assertIsNone(self.app.rtp, "pemantauan menyala tanpa folder yang ada")
+        isi = self.app.log.get("1.0", "end")
+        self.assertIn("folder pantauan", isi, "pengguna tidak diberi tahu")
+        # Keadaannya sengaja tidak dimatikan: folder bisa hanya sedang tidak
+        # tercolok (kandar USB), dan pengguna ingin pemantauan kembali menyala.
+        self.assertTrue(self.app.settings.rtp_enabled)
 
 
 class TestSplashScreen(TempCase):

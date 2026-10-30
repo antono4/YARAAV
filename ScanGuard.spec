@@ -50,6 +50,11 @@ hiddenimports = [
     "scanguard.ai.assistant",
     "scanguard.ai.cache",
     "scanguard.ai.privacy",
+    # Mode latar belakang (--rtp) diimpor di dalam fungsi, karena program utama
+    # tidak memakainya. Tanpa didaftarkan di sini, ScanGuard.exe --rtp akan
+    # gagal di komputer pengguna walaupun jalan baik di kode sumber.
+    "scanguard.background",
+    "scanguard.autostart",
     # urllib dipakai untuk memanggil penyedia AI. Sebagian modulnya diimpor
     # secara dinamis oleh pustaka standar, jadi ikut didaftarkan.
     "urllib.request",

@@ -7,6 +7,10 @@ Cara menjalankan dari kode sumber:
     python antivirus.py
 
 Cara membuat .exe: lihat build_exe.bat atau README.md.
+
+Opsi:
+    --cek-mesin    periksa semua mesin deteksi lalu keluar (tanpa jendela)
+    --rtp          jalankan hanya pemantauan, tanpa jendela (lihat README bagian 8)
 """
 
 from __future__ import annotations
@@ -143,6 +147,18 @@ def main() -> int:
 
     if "--cek-mesin" in sys.argv or "--self-test" in sys.argv:
         return _check_engines()
+
+    # Mode latar belakang: hanya pemantauan, tanpa jendela. Dipakai oleh
+    # "mulai otomatis saat Windows menyala", karena jendela lebar yang muncul
+    # sendiri setiap kali komputer dinyalakan akan segera ditutup pengguna -
+    # dan setelah ditutup pemantauannya ikut mati.
+    if "--rtp" in sys.argv:
+        try:
+            from scanguard.background import main as background_main
+        except ImportError as error:
+            sys.stderr.write(f"Mode latar belakang tidak tersedia: {error}\n")
+            return 1
+        return background_main()
 
     try:
         import tkinter  # noqa: F401

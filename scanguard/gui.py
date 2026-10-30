@@ -98,6 +98,7 @@ class ScanGuardApp:
         self._pump_queue()
         self._update_rtp_status()
         self._announce_startup()
+        self._resume_rtp_if_enabled()
 
     # ----------------------------------------------------------- persiapan -- #
 
@@ -971,6 +972,33 @@ class ScanGuardApp:
 
     # ------------------------------------------------- perlindungan nyata -- #
 
+    def _resume_rtp_if_enabled(self) -> None:
+        """Nyalakan kembali RTP bila pengguna pernah menyalakannya.
+
+        Dijalankan setelah jendela siap, bukan di tengah __init__, karena
+        RealtimeMonitor langsung memeriksa berkas dan melaporkan hasilnya ke
+        log - log itu harus sudah ada saat laporannya masuk.
+
+        Folder yang sudah tidak ada dilewati tanpa pesan kesalahan: folder bisa
+        dipindahkan atau dihapus di antara dua kali program dijalankan.
+        """
+        if not self.settings.rtp_enabled:
+            return
+        if not [f for f in self.settings.rtp_folders if os.path.isdir(f)]:
+            # Dinyalakan sebelumnya, tetapi foldernya sudah tidak ada. Keadaan
+            # tidak dikembalikan ke mati: pengguna mungkin hanya mencabut
+            # kandar USB sementara, dan menyalakannya lagi nanti akan otomatis
+            # berjalan kembali.
+            self._append_log(
+                "\nPerlindungan waktu nyata seharusnya menyala, tetapi tidak ada "
+                "folder pantauan yang bisa dipakai. Pilih folder lewat menu "
+                "Perlindungan Nyata.\n",
+                SEVERITY_TAGS[SEV_NOTE],
+            )
+            return
+        self._append_log("\nMelanjutkan perlindungan waktu nyata dari sesi lalu.\n")
+        self.start_rtp()
+
     def toggle_rtp(self) -> None:
         """Nyalakan atau matikan perlindungan waktu nyata."""
         self._mark_active("rtp")
@@ -1003,6 +1031,11 @@ class ScanGuardApp:
             on_error=self._rtp_error,
         )
         self.rtp.start()
+        # Keadaan ini disimpan supaya RTP menyala lagi sendiri saat program
+        # dibuka berikutnya. Sebelumnya pilihan ini hilang setiap kali program
+        # ditutup, sehingga pengguna harus menyalakannya ulang terus-menerus.
+        self.settings.rtp_enabled = True
+        self.settings.save()
         self._update_rtp_status()
         self._append_log(
             "\nPerlindungan waktu nyata AKTIF. Memantau "
@@ -1021,6 +1054,10 @@ class ScanGuardApp:
         if self.rtp is None:
             return
         self.rtp.stop()
+        # Dimatikan berarti pengguna memang tidak menginginkannya lagi; jangan
+        # menyalakannya kembali saat program dibuka berikutnya.
+        self.settings.rtp_enabled = False
+        self.settings.save()
         self._update_rtp_status()
         self._append_log(
             f"\nPerlindungan waktu nyata DIMATIKAN. "

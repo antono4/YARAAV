@@ -10,6 +10,8 @@ from tkinter import filedialog, messagebox, ttk
 from .ai.analyst import AiAnalyst, check_connection
 from .ai.assistant import answer_from_knowledge, suggested_questions
 from .ai.base import PROVIDERS, FileReport, build_client_from_settings
+from . import autostart
+from .background import log_path
 from .config import APP_NAME, MAX_WATCHED_FOLDERS, APP_VERSION, data_dir
 from .core import format_size, hash_file
 from .hashes import HashUpdater
@@ -342,6 +344,38 @@ class SettingsWindow(_BaseWindow):
             wraplength=560,
         ).pack(anchor="w", pady=(2, 0))
 
+        # Mulai otomatis saat Windows menyala. Hanya ditampilkan bila sistemnya
+        # memang punya registry Windows - di Linux/macOS pilihan ini tidak akan
+        # berpengaruh apa pun, jadi menampilkannya hanya membingungkan.
+        if autostart.is_supported():
+            self.rtp_autostart = tk.BooleanVar(value=autostart.is_enabled())
+            tk.Checkbutton(
+                panel_rtp,
+                text="Jalankan pemantauan otomatis saat Windows menyala",
+                variable=self.rtp_autostart,
+                bg=self.colors["panel"],
+                fg=self.colors["text"],
+                selectcolor=self.colors["bg"],
+                activebackground=self.colors["panel"],
+                activeforeground=self.colors["text"],
+                font=("Segoe UI", 9),
+                anchor="w",
+            ).pack(anchor="w", pady=(6, 0))
+            self._label(
+                panel_rtp,
+                "Dijalankan tanpa jendela: hanya pemantauannya yang bekerja di "
+                "latar belakang. Temuannya dicatat ke "
+                f"{os.path.basename(log_path())} di folder data, karena tidak ada "
+                "jendela untuk menampilkannya.",
+                bg=self.colors["panel"],
+                fg=self.colors["muted"],
+                font=("Segoe UI", 8),
+                justify="left",
+                wraplength=560,
+            ).pack(anchor="w")
+        else:
+            self.rtp_autostart = None
+
         # --- Pengecualian --------------------------------------------------- #
         panel4 = self._panel(outer)
         panel4.pack(fill="both", expand=True, pady=(10, 0))
@@ -571,6 +605,21 @@ class SettingsWindow(_BaseWindow):
             parent=self,
         )
 
+    def _terapkan_mulai_otomatis(self) -> None:
+        """Daftarkan atau hapus pendaftaran mulai otomatis.
+
+        Hasilnya dilaporkan ke log, bukan ke kotak pesan: kegagalan menulis
+        registry tidak boleh membatalkan penyimpanan pengaturan yang lain.
+        """
+        if self.rtp_autostart is None:
+            return
+        ingin = self.rtp_autostart.get()
+        sudah = autostart.is_enabled()
+        if ingin == sudah:
+            return
+        ok, pesan = autostart.enable() if ingin else autostart.disable()
+        self.app.log_line(pesan if ok else f"Gagal: {pesan}", "info" if ok else "note")
+
     def _save(self) -> None:
         self.settings.malwarebazaar_key = self.key_var.get().strip()
         self.settings.clamav_path = self.clam_var.get().strip()
@@ -582,6 +631,7 @@ class SettingsWindow(_BaseWindow):
         self.settings.log_clean_files = self.log_clean.get()
         self.settings.rtp_report_clean = self.rtp_report_clean.get()
         self.settings.rtp_auto_quarantine = self.rtp_auto_quarantine.get()
+        self._terapkan_mulai_otomatis()
         try:
             jeda = float(self.rtp_interval_var.get().replace(",", "."))
         except ValueError:

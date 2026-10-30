@@ -464,6 +464,8 @@ project/
 │   ├── quarantine.py          ← karantina aman + pemulihan byte-identik
 │   ├── scanner.py             ← orkestrator kelima mesin
 │   ├── realtime.py            ← perlindungan waktu nyata (pemantauan folder)
+│   ├── background.py          ← pemantauan tanpa jendela (--rtp)
+│   ├── autostart.py           ← mulai otomatis saat Windows menyala
 │   ├── report.py              ← penyusun laporan teks
 │   ├── settings.py            ← pengaturan pengguna (JSON, izin terbatas)
 │   ├── theme.py               ← palet warna tema terang
@@ -482,7 +484,7 @@ project/
 ├── assets/                    ← ikon aplikasi
 ├── tests/
 │   ├── fixtures.py            ← pembuat berkas PE untuk pengujian
-│   ├── test_core.py           ← 195 pengujian mesin dan antarmuka
+│   ├── test_core.py           ← 206 pengujian mesin dan antarmuka
 │   └── test_ai.py             ← 88 pengujian bagian AI
 ├── docs/                      ← gambar untuk README
 ├── tools/                     ← skrip bantu (ikon, folder contoh, tangkapan layar)
@@ -524,6 +526,46 @@ selalu terlihat di kartu utama, misalnya:
 Perlindungan waktu nyata: AKTIF - 37 berkas diperiksa, 2 mencurigakan
 ```
 
+**Pilihan Anda diingat.** Sekali dinyalakan, perlindungan waktu nyata menyala
+sendiri setiap kali program dibuka, sampai Anda mematikannya. Kalau foldernya
+sedang tidak ada (kandar USB tercabut, folder dipindahkan), program memberi tahu
+di log dan tidak menyalakan pemantauan - tetapi pilihannya tidak dihapus, jadi
+pemantauan berjalan kembali begitu foldernya ada lagi.
+
+### Menyalakan otomatis saat Windows menyala
+
+Di **Pengaturan**, bagian *Perlindungan waktu nyata*, ada pilihan **Jalankan
+pemantauan otomatis saat Windows menyala** (hanya muncul di Windows).
+
+Yang dijalankan adalah **pemantauan saja, tanpa jendela**. Alasannya praktis:
+jendela lebar yang terbuka sendiri setiap kali komputer dinyalakan akan segera
+ditutup pengguna, dan setelah ditutup pemantauannya ikut mati.
+
+Karena tidak ada jendela, temuannya dicatat ke berkas di folder data:
+
+```
+%LOCALAPPDATA%\ScanGuard\pemantauan.log
+```
+
+Isinya seperti ini:
+
+```
+2026-10-30 09:33:24  Pemantauan latar belakang AKTIF. Memantau: C:\Users\Anda\Unduhan. Jeda 2 detik.
+2026-10-30 09:35:02  [PANTAU MENCURIGAKAN] C:\Users\Anda\Unduhan\faktur.pdf.bat  (baru)
+    (Dekode muatan) Muatan terenkode dengan kemampuan berbahaya
+    Cara dibongkar: kandidat base64: buka base64, bongkar data terpadatkan. Nilai 3.
+```
+
+Untuk memeriksa berkas itu, atau untuk mematikan pemantauan, buka jendela
+ScanGuard seperti biasa. Pendaftaran ini ditulis di
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` - wilayah milik pengguna
+sendiri, jadi **tidak perlu hak administrator**, dan hanya berlaku untuk akun
+Anda.
+
+Kalau Anda ingin tahu apakah pemantauan latar belakang sedang berjalan, jalankan
+`ScanGuard.exe --rtp` dari Command Prompt: ia akan menolak dengan jelas bila
+belum ada folder pantauan, atau mencetak catatannya bila sudah ada.
+
 **Cara kerjanya.** Setiap beberapa detik program mendaftar berkas di folder
 pantauan, membandingkannya dengan daftar sebelumnya, lalu memeriksa yang baru
 atau berubah. Tidak ada pemantauan tingkat sistem operasi di sini, dan itu
@@ -539,6 +581,12 @@ disengaja: cara ini bisa diperiksa siapa saja dengan membaca kodenya.
 - **Folder yang sangat besar membuat pemeriksaan lambat**, karena daftar berkas
   dibaca ulang setiap putaran.
 - **Perubahan kecil pada berkas besar** memicu pemeriksaan ulang berkas itu.
+- **Mode latar belakang tidak punya lambang di baki sistem.** Ia hanya memakai
+  pustaka standar, jadi tidak ada ikon di sudut kanan bawah layar. Untuk
+  mematikannya, buka jendela ScanGuard lalu tekan Perlindungan Nyata sekali.
+- **Di mode latar belakang, karantina otomatis hanya berlaku bila Anda
+  menyalakannya.** Tidak ada jendela untuk bertanya, jadi temuan MALWARE tanpa
+  pilihan itu hanya dicatat ke berkas - bukan dipindahkan diam-diam.
 
 ### Pengaturan
 
@@ -549,6 +597,7 @@ Di **Pengaturan**, bagian *Perlindungan waktu nyata*:
 | Jeda antar pemeriksaan | 2 detik | Makin kecil makin responsif, makin besar makin ringan |
 | Tampilkan berkas bersih di log | mati | Kalau dinyalakan, folder yang ramai akan memenuhi log |
 | Pindahkan MALWARE ke karantina sendiri | **mati** | Kalau dinyalakan, berkas dipindahkan tanpa ditanya |
+| Jalankan otomatis saat Windows menyala | mati | Menjalankan pemantauan saja di latar belakang (hanya Windows) |
 
 Pilihan karantina otomatis sengaja dimatikan secara bawaan: ini memindahkan
 berkas pengguna tanpa konfirmasi, dan salah deteksi berarti berkas berpindah
@@ -603,7 +652,7 @@ bekerja - dan melihat aturan YARA melewatkannya.
 xvfb-run -a ./run_tests.sh
 ```
 
-283 pengujian, mencakup kelima mesin, karantina, orkestrator, laporan,
+294 pengujian, mencakup kelima mesin, karantina, orkestrator, laporan,
 pengaturan, bagian AI, perlindungan waktu nyata, layar pembuka, ikon menu,
 tata letak antarmuka, kontras warna (dihitung sebagai angka WCAG, bukan dinilai dari
 gambar), dan berkas build. Pengujian yang memerlukan ClamAV dilewati otomatis
