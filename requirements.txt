@@ -1,0 +1,19 @@
+# Kebutuhan untuk MEMBUAT dan MENJALANKAN dari kode sumber.
+# Pengguna akhir tidak perlu memasang apa pun: semuanya sudah dibungkus ke .exe.
+#
+#   pip install -r requirements.txt
+
+# --- Wajib: mesin deteksi ---
+yara-python>=4.5     # pencocokan pola memakai aturan YARA (standar industri)
+pefile>=2024.8       # analisis struktur program Windows (PE)
+
+# --- Wajib untuk membuat .exe ---
+pyinstaller>=6.6
+
+# --- Opsional: untuk membuat ikon aplikasi ---
+pillow>=10.0
+
+# --- Opsional, TIDAK dipasang lewat pip ---
+# ClamAV adalah program terpisah, bukan paket Python. Unduh dari
+# https://www.clamav.net/downloads lalu jalankan `freshclam` untuk mengunduh
+# basis data virus. Tanpa ClamAV, mesin lain tetap bekerja.

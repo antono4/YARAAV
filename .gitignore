@@ -1,0 +1,17 @@
+# Hasil build - tidak perlu masuk version control
+build/
+dist/
+*.spec.bak
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Berkas laporan hasil pemindaian
+laporan_scanguard_*.txt
+
+# Catatan kerja agen. Bukan bagian dari program, dan isinya bisa menyebut
+# proyek lain yang tidak ada hubungannya dengan repositori ini.
+.openhands/
