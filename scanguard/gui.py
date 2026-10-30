@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import queue
 import threading
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -48,6 +49,7 @@ from .realtime import RtEvent, RealtimeMonitor
 from .report import build_report
 from .scanner import ScanEngine
 from .settings import Settings
+from .splash import SplashScreen
 from .theme import COLORS
 
 class ScanGuardApp:
@@ -1352,5 +1354,25 @@ class ScanGuardApp:
 
 def main() -> None:
     root = tk.Tk()
-    ScanGuardApp(root)
+    # Jendela utama disembunyikan sampai siap. Menampilkannya lebih dulu lalu
+    # mengisinya membuat pengguna melihat jendela kosong yang berkedip.
+    root.withdraw()
+
+    splash = SplashScreen(root, COLORS)
+    root.update()  # gambar layar pembuka sebelum pekerjaan berat dimulai
+    splash.set_status("Menyiapkan basis data hash...")
+    root.update()
+
+    app = ScanGuardApp(root)
+
+    splash.set_status("Mesin siap dipakai.")
+    root.update()
+    # Layar pembuka ditahan sampai waktu tampil paling singkat terpenuhi;
+    # kalau tidak, ia hanya berkedip satu bingkai di komputer cepat.
+    while splash.remaining_ms() > 0:
+        root.update()
+        time.sleep(0.02)
+    splash.close()
+
+    root.deiconify()
     root.mainloop()

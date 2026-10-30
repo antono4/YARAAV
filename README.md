@@ -27,6 +27,10 @@ berkas berkedok ganda, dan satu berkas program besar. Jadi warna MALWARE,
 MENCURIGAKAN, dan PERLU DIPERIKSA di gambar muncul karena mesinnya memang
 mendeteksi, bukan karena lognya disunting.
 
+**Layar pembuka**, tampil sebentar saat program dijalankan:
+
+![Layar pembuka ScanGuard](docs/tangkapan-layar-pembuka.png)
+
 **Jendela utama setelah pemindaian.** Kartu status di atas meringkas hasilnya
 (perisai berubah warna sesuai tingkat terburuk), tombol pindai besar di tengah,
 dan log berwarna per tingkat bahaya di bawah. Panel kiri berisi navigasi:
@@ -64,8 +68,9 @@ bukan yang sudah tercatat — tetapi itu pun bukan bukti. Akibatnya:
   perilaku, sandbox, dan telemetri dari jutaan komputer — hal-hal yang tidak
   dimiliki program ini. Deteksi anomali menutupi sebagian celah itu, dengan
   menandai berkas yang menyimpang dari sekitarnya.
-- Program ini **tidak memantau berkas secara langsung** (tidak ada real-time
-  protection). Ia memeriksa saat Anda menekan "Mulai Pindai".
+- Pemindaian utama berjalan saat Anda menekannya. Ada **perlindungan waktu
+  nyata** (bagian 8), tetapi ia memeriksa berkas yang **sudah ada di disk**,
+  bukan memblokir pemasangannya seperti antivirus komersial.
 - Program ini **tidak memblokir** apa pun. Ia melaporkan dan menawarkan
   karantina.
 - **Tidak ada temuan bukan berarti berkas pasti aman.** Itu sebabnya laporan
@@ -444,6 +449,7 @@ project/
 │   ├── report.py              ← penyusun laporan teks
 │   ├── settings.py            ← pengaturan pengguna (JSON, izin terbatas)
 │   ├── theme.py               ← palet warna tema terang
+│   ├── splash.py              ← layar pembuka saat program dijalankan
 │   ├── dialogs.py             ← jendela pengaturan, pembaruan, karantina, asisten
 │   ├── ai/                    ← bagian kecerdasan buatan
 │   │   ├── base.py            ← pintu tunggal ke model bahasa (3 penyedia)
@@ -457,7 +463,7 @@ project/
 ├── assets/                    ← ikon aplikasi
 ├── tests/
 │   ├── fixtures.py            ← pembuat berkas PE untuk pengujian
-│   ├── test_core.py           ← 133 pengujian mesin dan antarmuka
+│   ├── test_core.py           ← 161 pengujian mesin dan antarmuka
 │   └── test_ai.py             ← 88 pengujian bagian AI
 ├── docs/                      ← gambar untuk README
 ├── tools/                     ← skrip bantu (ikon, folder contoh, tangkapan layar)
@@ -480,7 +486,7 @@ xvfb-run -a --server-args="-screen 0 1100x780x24" \
 ```
 
 Skrip pertama membuat folder contoh yang memicu ketiga tingkat bahaya. Skrip
-kedua menjalankan GUI sungguhan, memindai folder itu, lalu menyimpan empat
+kedua menjalankan GUI sungguhan, memindai folder itu, lalu menyimpan enam
 gambar ke `docs/`. Skrip kedua juga mencetak pemeriksaan tata letak: apakah
 tombol terpotong, apakah setiap warna tingkat bahaya benar-benar muncul di
 layar (dihitung dari piksel), dan apakah ada gambar yang nyaris satu warna
@@ -542,11 +548,11 @@ membuat SQLite melaporkan `database is locked`.
 xvfb-run -a ./run_tests.sh
 ```
 
-242 pengujian, mencakup keenam mesin, karantina, orkestrator, laporan,
-pengaturan, bagian AI, perlindungan waktu nyata, tata letak antarmuka, kontras
-warna (dihitung sebagai angka WCAG, bukan dinilai dari gambar), dan berkas
-build. Pengujian yang memerlukan ClamAV
-dilewati otomatis bila ClamAV tidak terpasang.
+249 pengujian, mencakup keenam mesin, karantina, orkestrator, laporan,
+pengaturan, bagian AI, perlindungan waktu nyata, layar pembuka, tata letak
+antarmuka, kontras warna (dihitung sebagai angka WCAG, bukan dinilai dari
+gambar), dan berkas build. Pengujian yang memerlukan ClamAV dilewati otomatis
+bila ClamAV tidak terpasang.
 
 Pengujian memakai berkas sungguhan, bukan tiruan: basis data SQLite sungguhan,
 berkas PE sungguhan (dibuat langsung dari struktur biner oleh

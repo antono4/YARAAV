@@ -1789,3 +1789,90 @@ class TestRealtimeGui(TempCase):
         self.app._closed = True
         self.p1.stop()
         self.p2.stop()
+
+
+class TestSplashScreen(TempCase):
+    """Layar pembuka: harus benar-benar tampil lalu benar-benar hilang.
+
+    Layar pembuka yang gagal ditutup akan menggantung di depan jendela utama,
+    dan pengguna tidak bisa memakai program sama sekali. Karena itu yang diuji
+    di sini adalah penutupannya, bukan tampilannya.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        from scanguard import gui as gui_mod
+        from scanguard import splash as splash_mod
+
+        self.gui_mod = gui_mod
+        self.splash_mod = splash_mod
+        try:
+            self.root = tk.Tk()
+        except tk.TclError as error:
+            self.skipTest(f"tkinter tidak bisa membuka jendela: {error}")
+        self.root.withdraw()
+        self.addCleanup(_safe_destroy, self.root)
+
+    def test_shows_and_closes(self) -> None:
+        splash = self.splash_mod.SplashScreen(self.root, self.gui_mod.COLORS, minimum_ms=0)
+        self.root.update()
+        self.assertTrue(splash.window.winfo_exists(), "jendela pembuka tidak dibuat")
+        splash.close()
+        self.assertFalse(splash.window.winfo_exists(), "jendela pembuka tidak tertutup")
+
+    def test_close_is_safe_to_call_twice(self) -> None:
+        """Penutupan bisa terpanggil dari dua arah: waktu dan kode pemanggil."""
+        splash = self.splash_mod.SplashScreen(self.root, self.gui_mod.COLORS, minimum_ms=0)
+        self.root.update()
+        splash.close()
+        splash.close()  # tidak boleh melempar kesalahan
+        self.assertFalse(splash.window.winfo_exists())
+
+    def test_remaining_ms_never_negative(self) -> None:
+        splash = self.splash_mod.SplashScreen(self.root, self.gui_mod.COLORS, minimum_ms=50)
+        self.root.update()
+        self.assertGreaterEqual(splash.remaining_ms(), 0)
+        time.sleep(0.1)
+        self.assertEqual(splash.remaining_ms(), 0)
+        splash.close()
+
+    def test_status_can_be_updated_while_visible(self) -> None:
+        splash = self.splash_mod.SplashScreen(self.root, self.gui_mod.COLORS, minimum_ms=0)
+        self.root.update()
+        splash.set_status("Menyiapkan basis data hash...")
+        self.assertEqual(splash.status_var.get(), "Menyiapkan basis data hash...")
+        splash.close()
+
+    def test_status_update_after_close_does_not_raise(self) -> None:
+        """Persiapan bisa selesai setelah layar pembuka keburu hilang."""
+        splash = self.splash_mod.SplashScreen(self.root, self.gui_mod.COLORS, minimum_ms=0)
+        self.root.update()
+        splash.close()
+        splash.set_status("terlambat")  # tidak boleh melempar kesalahan
+        self.assertFalse(splash.window.winfo_exists())
+
+    def test_auto_closes_after_the_minimum_time(self) -> None:
+        """Tanpa pemanggil yang menutupnya, layar pembuka harus hilang sendiri."""
+        splash = self.splash_mod.SplashScreen(self.root, self.gui_mod.COLORS, minimum_ms=120)
+        self.root.update()
+        deadline = time.time() + 5
+        while splash.window.winfo_exists() and time.time() < deadline:
+            self.root.update()
+            time.sleep(0.02)
+        self.assertFalse(
+            splash.window.winfo_exists(),
+            "layar pembuka tidak menutup sendiri; ia akan menggantung di depan "
+            "jendela utama",
+        )
+
+    def test_no_close_scheduled_when_minimum_is_zero(self) -> None:
+        """minimum_ms=0 berarti jangan tutup sendiri (dipakai alat tangkapan layar)."""
+        splash = self.splash_mod.SplashScreen(self.root, self.gui_mod.COLORS, minimum_ms=0)
+        self.root.update()
+        time.sleep(0.3)
+        self.root.update()
+        self.assertTrue(
+            splash.window.winfo_exists(),
+            "layar pembuka menutup sendiri padahal minimum_ms=0",
+        )
+        splash.close()

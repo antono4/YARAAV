@@ -28,6 +28,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scanguard import dialogs, gui  # noqa: E402
+from scanguard import splash as splash_mod  # noqa: E402
 
 # Kotak dialog bersifat modal: di lingkungan tanpa layar ia menunggu klik yang
 # tidak akan datang, sehingga skrip ini menggantung tanpa pesan. Diganti di sini;
@@ -58,9 +59,13 @@ def _grab(path: str, window=None) -> None:
         from PIL import Image
 
         lebar, tinggi = window.winfo_width(), window.winfo_height()
+        # Pangkas dari posisi jendela yang sebenarnya, bukan dari sudut (0,0).
+        # Jendela utama memang di sudut, tetapi layar pembuka ada di tengah
+        # layar; memotong dari sudut menghasilkan gambar satu warna.
+        x, y = window.winfo_rootx(), window.winfo_rooty()
         if lebar > 1 and tinggi > 1:
             with Image.open(path) as image:
-                image.convert("RGB").crop((0, 0, lebar, tinggi)).save(path)
+                image.convert("RGB").crop((x, y, x + lebar, y + tinggi)).save(path)
     except ImportError:
         pass
 
@@ -72,7 +77,24 @@ def main() -> int:
     folder, out = sys.argv[1], sys.argv[2]
 
     root = tk.Tk()
+    root.withdraw()
+
+    # --- Layar pembuka ------------------------------------------------------- #
+    # Dibuat lebih dulu, seperti saat program benar-benar dijalankan. minimum_ms
+    # dinolkan supaya tangkapan layar tidak menunggu.
+    splash = splash_mod.SplashScreen(root, gui.COLORS, minimum_ms=0)
+    root.update()
+    time.sleep(0.3)
+    # `out` boleh berupa folder (untuk README) atau nama berkas .png.
+    out_dir = out if not os.path.splitext(out)[1] else (os.path.dirname(out) or ".")
+    os.makedirs(out_dir, exist_ok=True)
+    splash_path = os.path.join(out_dir, "tangkapan-layar-pembuka.png")
+    _grab(splash_path, splash.window)
+    print(f"tangkapan layar (layar pembuka) disimpan: {splash_path}")
+    splash.close()
+
     app = gui.ScanGuardApp(root)
+    root.deiconify()
     app.folder_var.set(folder)
     root.update()
 
