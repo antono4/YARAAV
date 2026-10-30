@@ -33,6 +33,7 @@ from .clamav_engine import ClamAVEngine
 from .config import (
     BIG_FILE_BYTES,
     ENGINE_AI,
+    ENGINE_DECODE,
     ENGINE_HASH,
     ENGINE_NAME,
     ENGINE_PE,
@@ -53,6 +54,7 @@ from .core import (
     is_double_extension,
     is_executable_extension,
 )
+from .decode_engine import DecodeEngine
 from .hashes import HashDatabase
 from .pe_engine import PEEngine
 from .quarantine import Quarantine
@@ -69,6 +71,7 @@ class ScanEngine:
         use_clamav: bool = True,
         use_yara: bool = True,
         use_pe: bool = True,
+        use_decode: bool = True,
         rules_path: str | None = None,
     ) -> None:
         self.db = database or HashDatabase()
@@ -77,6 +80,7 @@ class ScanEngine:
         self.yara = YaraEngine(rules_path) if use_yara else None
         self.pe = PEEngine() if use_pe else None
         self.clamav = ClamAVEngine() if use_clamav else None
+        self.decode = DecodeEngine() if use_decode else None
         self.exclusions: list[str] = []
         self._engines_ready = False
 
@@ -134,6 +138,11 @@ class ScanEngine:
             )
             if not available:
                 report["warnings"].append(self.pe.status)
+
+        if self.decode is not None:
+            report["engines"].append(
+                {"name": ENGINE_DECODE, "ok": True, "message": self.decode.status}
+            )
 
         if self.clamav is not None:
             status = self.clamav.detect(force=True)
@@ -256,6 +265,14 @@ class ScanEngine:
         if self.pe is not None:
             findings.extend(self.pe.scan_file(path))
 
+        # --- Dekode muatan --------------------------------------------------- #
+        # Dijalankan setelah YARA dan PE: keduanya melihat berkas apa adanya,
+        # sedangkan mesin ini membongkar penyandiannya lebih dulu. Perintah yang
+        # disandikan tidak akan pernah cocok dengan aturan YARA, karena teksnya
+        # tidak ada di berkas mentah.
+        if self.decode is not None:
+            findings.extend(self.decode.scan_file(path))
+
         # --- ClamAV untuk satu berkas (dipakai saat pemindaian berkas tunggal) #
         if with_clamav and self.clamav is not None and self.clamav.available:
             findings.extend(self.clamav.scan_file(path))
@@ -328,6 +345,8 @@ class ScanEngine:
             engines.append(ENGINE_YARA)
         if self.pe is not None and self.pe.available:
             engines.append(ENGINE_PE)
+        if self.decode is not None:
+            engines.append(ENGINE_DECODE)
         clamav_ready = (
             self.clamav is not None and self.clamav.available
         )
@@ -513,7 +532,7 @@ class ScanEngine:
         berubah: hasil lama yang dibuat dengan aturan lama tidak boleh dipercaya
         begitu saja.
         """
-        parts = [f"h{self.db.count()}"]
+        parts = [f"h{self.db.count()}", f"d{1 if self.decode is not None else 0}"]
         if self.yara is not None:
             try:
                 parts.append(f"y{int(os.path.getmtime(self.yara.rules_path))}")

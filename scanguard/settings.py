@@ -41,6 +41,10 @@ class Settings:
     use_yara: bool = True
     use_pe: bool = True
     use_clamav: bool = True
+    # Membongkar penyandian (base64, hex, gzip, kode karakter) lalu memeriksa
+    # isinya. Bawaannya menyala: hanya memakai pustaka standar, tidak butuh
+    # internet, dan menutup celah yang paling sering dipakai malware.
+    use_decode: bool = True
     # Tampilkan berkas bersih satu per satu di log (biasanya terlalu ramai).
     log_clean_files: bool = False
 

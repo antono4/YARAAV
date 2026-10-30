@@ -108,6 +108,7 @@ class ScanGuardApp:
             use_clamav=self.settings.use_clamav,
             use_yara=self.settings.use_yara,
             use_pe=self.settings.use_pe,
+            use_decode=self.settings.use_decode,
         )
         if self.settings.clamav_path:
             engine.clamav.executable = self.settings.clamav_path

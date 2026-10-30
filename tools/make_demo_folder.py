@@ -67,6 +67,28 @@ def main() -> int:
         "powershell.exe -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAKQ==\r\n",
     )
 
+    # --- MENCURIGAKAN: perintah jahat yang disandikan (mesin dekode) -------- #
+    # Perintah di dalam berkas ini tidak pernah muncul sebagai teks, karena
+    # dipadatkan lalu di-base64. Aturan YARA tidak bisa menemukannya; hanya
+    # mesin dekode yang bisa, karena ia membongkar penyandiannya lebih dulu.
+    import base64 as _base64
+    import gzip as _gzip
+
+    tersembunyi = _base64.b64encode(
+        _gzip.compress(
+            b"vssadmin delete shadows /all /quiet\r\n"
+            b"bcdedit /set recoveryenabled no\r\n"
+            b"wbadmin delete catalog -quiet\r\n"
+        )
+    ).decode()
+    _write_text(
+        os.path.join(folder, "pembaruan-sistem.bat"),
+        "@echo off\r\n"
+        "rem Skrip contoh untuk tangkapan layar - tidak berbahaya\r\n"
+        "set DATA=" + tersembunyi + "\r\n"
+        "echo %DATA% | powershell -Command -\r\n",
+    )
+
     # --- PERLU DIPERIKSA: nama berkas berkedok ganda ------------------------ #
     _write_text(
         os.path.join(folder, "faktur-2026.pdf.exe"),

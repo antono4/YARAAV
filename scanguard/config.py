@@ -7,7 +7,7 @@ import sys
 
 APP_NAME = "ScanGuard"
 APP_VERSION = "2.0.0"
-APP_TAGLINE = "Mesin pemindai multi-engine: hash, YARA, analisis PE, dan ClamAV"
+APP_TAGLINE = "Mesin pemindai multi-engine: hash, YARA, PE, dekode muatan, dan ClamAV"
 
 # --- Tingkat bahaya -------------------------------------------------------- #
 SEV_MALWARE = "MALWARE"
@@ -33,6 +33,7 @@ ENGINE_PE = "Analisis PE"
 ENGINE_CLAMAV = "ClamAV"
 ENGINE_NAME = "Nama & ukuran"
 ENGINE_AI = "AI: deteksi anomali"
+ENGINE_DECODE = "Dekode muatan"
 
 # --- Batas pemindaian ------------------------------------------------------ #
 # Hanya bagian awal berkas yang dibaca untuk pencarian pola teks dan analisis
@@ -44,6 +45,29 @@ MAX_READ_BYTES = 16 * 1024 * 1024  # 16 MB
 MAX_HASH_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
 BIG_FILE_BYTES = 20 * 1024 * 1024  # 20 MB
 ENTROPY_PACKED_THRESHOLD = 7.2
+
+# --- Mesin dekode (pembongkar penyandian) ---------------------------------- #
+# Batas-batas ini bukan hiasan. Berkas yang dibuat khusus untuk menggembungkan
+# memori (zip bomb) atau untuk memaksa pemindai bekerja tanpa henti bisa membuat
+# program mati, dan pemindai yang mati lebih buruk daripada pemindai yang
+# melewatkan satu berkas.
+#
+# Batas baca lebih kecil daripada MAX_READ_BYTES: hasil dekode hampir selalu
+# berada di bagian awal berkas, sedangkan pencarian pola pada 16 MB sekaligus
+# membuat satu berkas memakan waktu lama.
+DECODE_MAX_READ_BYTES = 8 * 1024 * 1024
+# Panjang terpendek rangkaian yang dianggap kandidat. Terlalu pendek berarti
+# setiap kata biasa ikut diuji dan pemindaian penuh kebisingan.
+DECODE_MIN_CANDIDATE = 24
+# Paling banyak hasil dekode yang diperiksa per berkas.
+DECODE_MAX_CANDIDATES = 60
+# Paling banyak lapis penyandian yang dibongkar. Base64 di dalam gzip di dalam
+# base64 sudah tiga lapis; lebih dari ini hampir selalu berkas yang sengaja
+# dibuat untuk memperlambat pemindai.
+DECODE_MAX_DEPTH = 3
+# Batas ukuran satu hasil dekode. Satu berkas kecil bisa memuai menjadi
+# gigabytes tanpa batas ini.
+DECODE_MAX_RESULT_BYTES = 8 * 1024 * 1024
 # --- Perlindungan waktu nyata (RTP) --------------------------------------- #
 # Batas jumlah folder pantauan. Setiap folder menambah satu penelusuran penuh
 # setiap putaran, jadi menambah banyak folder membuat pemantauan makin berat.

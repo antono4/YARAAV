@@ -6,7 +6,7 @@ installer `setup.exe`. Tampilannya mengikuti gaya aplikasi keamanan pada
 umumnya: tema terang, panel navigasi di kiri, dan satu tombol pindai besar
 sebagai tindakan utama.
 
-Program ini **benar-benar memeriksa berkas**, memakai empat mesin deteksi ditambah
+Program ini **benar-benar memeriksa berkas**, memakai lima mesin deteksi ditambah
 dua bagian kecerdasan buatan yang bekerja berdampingan:
 
 | Mesin | Cara kerja | Butuh internet? |
@@ -14,6 +14,7 @@ dua bagian kecerdasan buatan yang bekerja berdampingan:
 | **Hash SHA-256 / SHA-1 / MD5** | Membandingkan sidik jari berkas dengan basis data malware yang sudah dikonfirmasi | Tidak (basis data bawaan); ya untuk memperbarui |
 | **YARA** | Mencocokkan pola perilaku (12 aturan: EICAR, penghapusan shadow copy, PowerShell tersembunyi, pencuri kredensial, dan lainnya) | Tidak |
 | **Analisis PE** | Membaca struktur program Windows: daftar impor, section, entropi, penanda pemadat | Tidak |
+| **Dekode muatan** | Membongkar penyandian lebih dulu (base64, hex, gzip/zlib/bzip2/xz, kode karakter, ROT13, `-EncodedCommand` PowerShell), lalu menilai isi hasilnya. Menangkap perintah yang **tidak pernah muncul** sebagai teks, sehingga lolos dari pencocokan pola biasa. | Tidak |
 | **ClamAV** | Basis data tanda tangan virus sungguhan (108 MB, **lebih dari 3 juta tanda tangan** pada pengujian ini) | Tidak (opsional dipasang terpisah) |
 | **AI: deteksi anomali** | Model dilatih di komputer Anda dari berkas di folder yang sedang dipindai, lalu mencari berkas yang menyimpang. Bisa menyorot malware baru yang belum ada di basis data mana pun. | **Tidak** |
 | **AI: penjelasan temuan** | Model bahasa menjelaskan temuan dalam bahasa sehari-hari dan menjawab pertanyaan Anda. | Ya (kecuali Ollama) |
@@ -57,7 +58,7 @@ mesin sungguhan:
 
 ## Baca ini lebih dulu: batas yang jujur
 
-Ini **bukan** pengganti Windows Defender atau antivirus resmi. Empat mesin
+Ini **bukan** pengganti Windows Defender atau antivirus resmi. Mesin-mesin
 pertama bekerja dengan cara yang sama: **mengenali apa yang sudah diketahui.**
 Deteksi anomali bekerja dengan cara yang berbeda — ia mencari yang *janggal*,
 bukan yang sudah tercatat — tetapi itu pun bukan bukti. Akibatnya:
@@ -79,6 +80,11 @@ bukan yang sudah tercatat — tetapi itu pun bukan bukti. Akibatnya:
 - **Deteksi anomali (AI) menemukan yang janggal, bukan yang terbukti jahat.**
   Hasilnya selalu berlabel PERLU DIPERIKSA, tidak pernah MALWARE, karena
   berbeda dari berkas lain bukan bukti kejahatan.
+- **Mesin dekode membongkar penyandian, tetapi tidak menjalankan apa pun.**
+  Ia tidak melihat apa yang sebuah program lakukan saat berjalan, dan tidak
+  bisa membongkar penyandian buatan sendiri yang memakai kunci. Lapisan yang
+  ditangani terbatas pada yang tercantum di bagian 9, dengan kedalaman maksimal
+  tiga lapis.
 
 Pakai ScanGuard sebagai **pemeriksa tambahan**, bukan sebagai satu-satunya
 pelindung. Kalau Anda hanya memasang satu alat keamanan di Windows, pakai
@@ -165,12 +171,23 @@ sehingga satu warna punya satu arti di seluruh program.
 | Tingkat | Artinya | Contoh |
 |---|---|---|
 | **MALWARE** | Bukti kuat. Hash cocok basis data, atau YARA menemukan pola yang jelas berbahaya, atau ClamAV mengenali tanda tangan virus. | EICAR, penghapusan shadow copy, impor penyuntikan kode |
-| **MENCURIGAKAN** | Pola yang lazim pada malware, tetapi bisa juga muncul di program sah. | Ekstensi ganda (`Faktur.pdf.exe`), impor mencurigakan dalam jumlah sedang |
+| **MENCURIGAKAN** | Pola yang lazim pada malware, tetapi bisa juga muncul di program sah. | Ekstensi ganda (`Faktur.pdf.exe`), impor mencurigakan dalam jumlah sedang, perintah jahat yang disandikan |
 | **PERLU DIPERIKSA** | Petunjuk lemah. Hanya muncul bila terkumpul cukup banyak. | Section yang bisa ditulis sekaligus dijalankan, program berukuran tidak wajar, berkas yang menyimpang dari sekitarnya (AI) |
 
 Tingkat dipisahkan seperti ini dengan sengaja. Alat yang menuduh semua hal
 sebagai virus akan diabaikan penggunanya, dan alat yang diabaikan sama saja
 dengan tidak ada.
+
+Mesin dekode **tidak pernah** memberi tingkat MALWARE, setinggi apa pun nilai
+penandanya. Isi hasil dekode adalah bukti yang kuat, tetapi bukan bukti yang
+bisa diperiksa ulang seperti hash yang cocok atau tanda tangan virus. Batas
+tertingginya MENCURIGAKAN, dan keputusan akhirnya tetap pada pengguna.
+
+Menemukan penyandian saja juga belum cukup untuk melaporkan apa pun. Base64
+sangat lazim di berkas yang sah - sertifikat, gambar, dan berkas konfigurasi
+memakainya terus-menerus - jadi laporan hanya dibuat bila isi hasil dekodenya
+memuat penanda kemampuan berbahaya. Setiap laporan menyertakan cuplikan hasil
+dekodenya, supaya Anda bisa menilai sendiri apakah temuan itu masuk akal.
 
 ---
 
@@ -442,9 +459,10 @@ project/
 │   ├── hashes.py              ← basis data hash SQLite + pembaruannya
 │   ├── yara_engine.py         ← mesin YARA (dengan cache kompilasi aturan)
 │   ├── pe_engine.py           ← analisis struktur program Windows
+│   ├── decode_engine.py       ← pembongkar penyandian muatan tersembunyi
 │   ├── clamav_engine.py       ← pembungkus clamscan (mode batch)
 │   ├── quarantine.py          ← karantina aman + pemulihan byte-identik
-│   ├── scanner.py             ← orkestrator keempat mesin
+│   ├── scanner.py             ← orkestrator kelima mesin
 │   ├── realtime.py            ← perlindungan waktu nyata (pemantauan folder)
 │   ├── report.py              ← penyusun laporan teks
 │   ├── settings.py            ← pengaturan pengguna (JSON, izin terbatas)
@@ -464,7 +482,7 @@ project/
 ├── assets/                    ← ikon aplikasi
 ├── tests/
 │   ├── fixtures.py            ← pembuat berkas PE untuk pengujian
-│   ├── test_core.py           ← 169 pengujian mesin dan antarmuka
+│   ├── test_core.py           ← 195 pengujian mesin dan antarmuka
 │   └── test_ai.py             ← 88 pengujian bagian AI
 ├── docs/                      ← gambar untuk README
 ├── tools/                     ← skrip bantu (ikon, folder contoh, tangkapan layar)
@@ -540,7 +558,43 @@ tanpa diminta. Menyalakannya adalah keputusan Anda.
 Keduanya memakai basis data cache yang sama, dan dua penulis bersamaan bisa
 membuat SQLite melaporkan `database is locked`.
 
-## 9. Menjalankan pengujian
+## 9. Mesin dekode: membongkar muatan yang disembunyikan
+
+Mesin lain mencocokkan pola pada isi berkas apa adanya. Kelemahan itu dipakai
+malware: perintahnya disandikan lebih dulu, sehingga teks berbahayanya tidak
+pernah muncul di berkas mentah. Aturan YARA yang mencari
+`vssadmin delete shadows` tidak akan menemukannya, karena rangkaian huruf itu
+memang tidak ada di sana.
+
+Mesin dekode membongkar penyandian itu lebih dulu, lalu menilai isi hasilnya.
+Yang ditangani: base64, heksadesimal, gzip/zlib/bzip2/xz, daftar kode karakter,
+`chr()` berturut-turut, ROT13, dan `-EncodedCommand` PowerShell (yang isinya
+UTF-16LE). Lapisannya boleh bertingkat - base64 di dalam gzip di dalam base64
+adalah susunan yang lazim, dan satu lapis saja melewatkan sebagian besar kasus
+nyata.
+
+Tiga hal yang membuatnya aman dipakai:
+
+* **Berkas tidak pernah dijalankan.** Semuanya hanya pembacaan byte dan dekode
+  di memori. Tidak ada shellcode yang dieksekusi, tidak ada sandbox, tidak ada
+  koneksi jaringan.
+* **Batas dipasang di semua arah.** Satu berkas kecil bisa memuai menjadi
+  puluhan MB (zip bomb), dan pencocokan pola pada blob sebesar itu membuat satu
+  berkas memakan waktu berdetik-detik. Karena itu ada batas ukuran baca, batas
+  ukuran hasil dekode, batas kedalaman lapisan, batas jumlah kandidat per jenis,
+  dan batas panjang teks yang dinilai. Pengujiannya membuktikan zip bomb 50 MB
+  selesai di bawah 10 detik tanpa kehabisan memori.
+* **Buktinya ditampilkan.** Setiap laporan menyebutkan cara pembongkarannya dan
+  menampilkan cuplikan hasil dekode, bukan hanya menyatakan berkas itu
+  mencurigakan.
+
+Berkas `tools/make_demo_folder.py` membuat berkas contoh yang perintahnya
+disembunyikan dengan cara ini, sehingga Anda bisa melihat sendiri mesin ini
+bekerja - dan melihat aturan YARA melewatkannya.
+
+---
+
+## 10. Menjalankan pengujian
 
 ```bash
 ./run_tests.sh
@@ -549,7 +603,7 @@ membuat SQLite melaporkan `database is locked`.
 xvfb-run -a ./run_tests.sh
 ```
 
-257 pengujian, mencakup keenam mesin, karantina, orkestrator, laporan,
+283 pengujian, mencakup kelima mesin, karantina, orkestrator, laporan,
 pengaturan, bagian AI, perlindungan waktu nyata, layar pembuka, ikon menu,
 tata letak antarmuka, kontras warna (dihitung sebagai angka WCAG, bukan dinilai dari
 gambar), dan berkas build. Pengujian yang memerlukan ClamAV dilewati otomatis
@@ -561,7 +615,7 @@ berkas PE sungguhan (dibuat langsung dari struktur biner oleh
 Yang diganti hanya kotak dialog modal dan kecepatan waktu, karena keduanya tidak
 bisa dipakai di lingkungan tanpa layar.
 
-## 10. Bagaimana bagian yang sulit dikerjakan
+## 11. Bagaimana bagian yang sulit dikerjakan
 
 **Jendela tidak boleh membeku.** Pemindaian berjalan di thread pekerja, dan
 thread itu **tidak pernah menyentuh widget tkinter**. Ia hanya menaruh kejadian
@@ -620,7 +674,7 @@ lebih gelap (`#17694a`, **6,65:1**), dan warna aksen yang lebih terang tetap
 dipakai hanya sebagai isian ikon, bukan sebagai latar teks. Satu warna tidak
 bisa dipakai untuk keduanya.
 
-## 11. Lisensi dan penggunaan
+## 12. Lisensi dan penggunaan
 
 Proyek edukasi. Pindai hanya folder milik Anda sendiri. Program ini tidak
 mengunggah berkas apa pun ke internet; permintaan jaringan hanya dilakukan saat

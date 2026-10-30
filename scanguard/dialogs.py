@@ -219,6 +219,7 @@ class SettingsWindow(_BaseWindow):
         self.use_yara = tk.BooleanVar(value=self.settings.use_yara)
         self.use_pe = tk.BooleanVar(value=self.settings.use_pe)
         self.use_clamav = tk.BooleanVar(value=self.settings.use_clamav)
+        self.use_decode = tk.BooleanVar(value=self.settings.use_decode)
         self.auto_quarantine = tk.BooleanVar(value=self.settings.auto_quarantine)
         self.log_clean = tk.BooleanVar(value=self.settings.log_clean_files)
 
@@ -226,6 +227,10 @@ class SettingsWindow(_BaseWindow):
             ("Aturan YARA (pencocokan pola perilaku)", self.use_yara),
             ("Analisis PE (struktur program Windows)", self.use_pe),
             ("ClamAV (basis data signature, bila tersedia)", self.use_clamav),
+            (
+                "Dekode muatan (bongkar base64, hex, gzip, kode karakter)",
+                self.use_decode,
+            ),
             ("Pindahkan temuan MALWARE ke karantina otomatis", self.auto_quarantine),
             ("Tampilkan berkas bersih satu per satu di log", self.log_clean),
         ):
@@ -572,6 +577,7 @@ class SettingsWindow(_BaseWindow):
         self.settings.use_yara = self.use_yara.get()
         self.settings.use_pe = self.use_pe.get()
         self.settings.use_clamav = self.use_clamav.get()
+        self.settings.use_decode = self.use_decode.get()
         self.settings.auto_quarantine = self.auto_quarantine.get()
         self.settings.log_clean_files = self.log_clean.get()
         self.settings.rtp_report_clean = self.rtp_report_clean.get()

