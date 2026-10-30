@@ -44,6 +44,7 @@ from .dialogs import (
     UpdateWindow,
 )
 from .hashes import HashDatabase
+from . import icons
 from .quarantine import Quarantine
 from .realtime import RtEvent, RealtimeMonitor
 from .report import build_report
@@ -75,6 +76,9 @@ class ScanGuardApp:
         # Tombol sidebar dan halaman yang sedang tampil. Dipakai untuk menandai
         # menu yang aktif, seperti aplikasi desktop pada umumnya.
         self.nav_buttons: dict[str, tk.Button] = {}
+        # Canvas ikon per menu. Disimpan supaya gambarnya bisa diganti warna
+        # saat menu menjadi aktif atau kembali biasa.
+        self.nav_icons: dict[str, tk.Canvas] = {}
         self.current_page = "beranda"
 
         self.db = HashDatabase()
@@ -243,8 +247,27 @@ class ScanGuardApp:
             ("pengaturan", "Pengaturan", self.open_settings),
         ]
         for key, label, command in menu:
-            button = self._nav_button(isi, label, command, key)
-            button.pack(fill="x", pady=2)
+            baris = tk.Frame(isi, bg=self.colors["sidebar"])
+            baris.pack(fill="x", pady=2)
+            button = self._nav_button(baris, label, command, key)
+            button.pack(fill="both", expand=True)
+            # Ikon diletakkan DI ATAS tombol, bukan di sebelahnya. Tombol Tk
+            # tidak bisa memuat dua warna teks, jadi ikon berwarna sendiri harus
+            # jadi widget terpisah; menaruhnya di dalam tombol akan menutupi
+            # teksnya.
+            ikon = tk.Canvas(
+                button,
+                width=icons.UKURAN,
+                height=icons.UKURAN,
+                bg=self.colors["sidebar"],
+                highlightthickness=0,
+                bd=0,
+            )
+            ikon.place(x=9, y=8)
+            # Ikon tidak boleh menelan klik: kalau tidak, menekan tepat di
+            # atasnya tidak membuka menu.
+            ikon.bind("<Button-1>", lambda _e, cmd=command: cmd())
+            self.nav_icons[key] = ikon
             self.nav_buttons[key] = button
 
         # Keterangan kecil di kaki panel: mengingatkan sifat alat ini tanpa
@@ -271,7 +294,7 @@ class ScanGuardApp:
         """
         return tk.Button(
             parent,
-            text="  " + label,
+            text="     " + label,
             command=command,
             bg=self.colors["sidebar"],
             fg=self.colors["sidebar_text"],
@@ -289,18 +312,21 @@ class ScanGuardApp:
     def _mark_active(self, key: str) -> None:
         self.current_page = key
         for name, button in self.nav_buttons.items():
-            if name == key:
-                button.configure(
-                    bg=self.colors["sidebar_active"],
-                    fg=self.colors["accent"],
-                    font=("Segoe UI", 10, "bold"),
-                )
-            else:
-                button.configure(
-                    bg=self.colors["sidebar"],
-                    fg=self.colors["sidebar_text"],
-                    font=("Segoe UI", 10),
-                )
+            aktif = name == key
+            warna_latar = (
+                self.colors["sidebar_active"] if aktif else self.colors["sidebar"]
+            )
+            warna_ikon = self.colors["accent"] if aktif else self.colors["muted"]
+            button.configure(
+                bg=warna_latar,
+                fg=self.colors["accent"] if aktif else self.colors["sidebar_text"],
+                activebackground=self.colors["sidebar_active"],
+                font=("Segoe UI", 10, "bold") if aktif else ("Segoe UI", 10),
+            )
+            ikon = self.nav_icons.get(name)
+            if ikon is not None:
+                ikon.configure(bg=warna_latar)
+                icons.draw(ikon, name, warna_ikon)
 
     def show_home(self) -> None:
         """Kembali ke halaman utama dan tandai menunya aktif."""

@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -29,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tests.fixtures import build_minimal_pe  # noqa: E402
 
 from scanguard import config  # noqa: E402
+from scanguard import icons  # noqa: E402
 from scanguard.clamav_engine import ClamAVEngine, parse_clamscan_output  # noqa: E402
 from scanguard.core import (  # noqa: E402
     Finding,
@@ -1876,3 +1878,171 @@ class TestSplashScreen(TempCase):
             "layar pembuka menutup sendiri padahal minimum_ms=0",
         )
         splash.close()
+
+
+class TestMenuIcons(unittest.TestCase):
+    """Ikon menu digambar vektor di atas Canvas.
+
+    Emoji tidak dipakai sama sekali: di Windows tanpa font emoji, emoji tampil
+    sebagai kotak kosong, dan ikon yang rusak lebih buruk daripada tidak ada
+    ikon. Berkas PNG juga tidak dipakai, karena itu akan menambah Pillow sebagai
+    kebutuhan saat program dijalankan.
+    """
+
+    def setUp(self) -> None:
+        try:
+            self.root = tk.Tk()
+        except tk.TclError as error:
+            self.skipTest(f"tkinter tidak bisa membuka jendela: {error}")
+        self.root.withdraw()
+        self.addCleanup(_safe_destroy, self.root)
+
+    def _canvas(self) -> tk.Canvas:
+        return tk.Canvas(
+            self.root, width=icons.UKURAN, height=icons.UKURAN, highlightthickness=0
+        )
+
+    def test_every_kind_draws_something(self) -> None:
+        """Setiap ikon harus benar-benar tergambar, bukan canvas kosong."""
+        for kind in icons.kinds():
+            with self.subTest(ikon=kind):
+                canvas = self._canvas()
+                icons.draw(canvas, kind, "#334155")
+                self.assertTrue(
+                    canvas.find_all(), f"ikon '{kind}' tidak menggambar apa pun"
+                )
+
+    def test_every_nav_menu_has_an_icon(self) -> None:
+        """Menu di sidebar dan daftar ikon harus sama isinya.
+
+        Menu tanpa ikon akan tampak kosong di sebelah kiri, dan ikon tanpa menu
+        hanya menambah kode mati.
+        """
+        from scanguard import gui as gui_mod
+
+        sumber = gui_mod.__file__
+        with open(sumber, encoding="utf-8") as handle:
+            teks = handle.read()
+        kunci_menu = set(re.findall(r'\("([a-z]+)",\s*"[^"]+",\s*self\.', teks))
+        self.assertTrue(kunci_menu, "tidak menemukan daftar menu di gui.py")
+        self.assertEqual(
+            kunci_menu,
+            set(icons.kinds()),
+            "daftar menu dan daftar ikon tidak sama isinya",
+        )
+
+    def test_icons_stay_inside_their_canvas(self) -> None:
+        """Ikon tidak boleh menyentuh tepi canvas.
+
+        Garis yang menyentuh tepi terpotong setengah dan terlihat sebagai ikon
+        yang penyok. Bug ini nyata: versi pertama memakai canvas 16x16 dengan
+        gambar 16x16, sehingga ujungnya terpotong.
+        """
+        for kind in icons.kinds():
+            with self.subTest(ikon=kind):
+                canvas = self._canvas()
+                icons.draw(canvas, kind, "#334155")
+                for item in canvas.find_all():
+                    x0, y0, x1, y1 = canvas.bbox(item)
+                    self.assertGreaterEqual(
+                        min(x0, y0), 0, f"ikon '{kind}' keluar dari canvas"
+                    )
+                    self.assertLess(
+                        max(x1, y1),
+                        icons.UKURAN,
+                        f"ikon '{kind}' menyentuh tepi canvas dan akan terpotong",
+                    )
+
+    def test_unknown_kind_draws_nothing_instead_of_raising(self) -> None:
+        canvas = self._canvas()
+        icons.draw(canvas, "tidak-ada", "#334155")  # tidak boleh melempar
+        self.assertFalse(canvas.find_all(), "ikon tak dikenal malah menggambar")
+
+    def test_redraw_does_not_leave_old_pixels(self) -> None:
+        """Menggambar ulang harus membersihkan gambar lama.
+
+        Tanpa pembersihan, ikon akan menumpuk setiap kali status aktif berubah.
+        """
+        canvas = self._canvas()
+        icons.draw(canvas, "pengaturan", "#334155")
+        icons.draw(canvas, "beranda", "#334155")
+        # Canvas baru berisi ikon yang sama harus punya jumlah elemen yang sama.
+        # Kalau gambar lama tidak dibuang, jumlahnya akan lebih banyak.
+        pembanding = self._canvas()
+        icons.draw(pembanding, "beranda", "#334155")
+        self.assertEqual(
+            len(canvas.find_all()),
+            len(pembanding.find_all()),
+            "gambar lama tidak dibuang saat menggambar ulang",
+        )
+
+
+class TestSidebarIconsInApp(TempCase):
+    """Ikon di dalam jendela sungguhan: warna ikut menu aktif."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        try:
+            self.root, self.app, self.p1, self.p2 = _make_app()
+        except tk.TclError as error:
+            self.skipTest(f"tkinter tidak bisa membuka jendela: {error}")
+        self.addCleanup(self.p2.stop)
+        self.addCleanup(self.p1.stop)
+        self.addCleanup(_safe_close, self.app, self.root)
+
+    def test_every_button_has_a_drawn_icon(self) -> None:
+        self.root.update()
+        self.assertEqual(
+            set(self.app.nav_icons),
+            set(self.app.nav_buttons),
+            "tombol dan ikon sidebar tidak berpasangan",
+        )
+        for key, canvas in self.app.nav_icons.items():
+            with self.subTest(menu=key):
+                self.assertTrue(canvas.find_all(), f"ikon menu '{key}' kosong")
+
+    def test_icon_colour_follows_the_active_menu(self) -> None:
+        """Ikon menu aktif harus ikut berubah, bukan hanya latarnya."""
+        self.root.update()
+        # Warna dasar harus diambil saat menu itu TIDAK aktif. Mengambilnya saat
+        # menu itu justru sedang aktif membuat perbandingannya selalu sama, dan
+        # uji seperti itu tidak menguji apa pun.
+        self.app._mark_active("pengaturan")
+        self.root.update()
+        biasa = self.app.nav_icons["beranda"]
+        warna_biasa = biasa.itemcget(biasa.find_all()[0], "fill")
+        latar_biasa = biasa.cget("bg")
+
+        self.app._mark_active("karantina")
+        self.root.update()
+        aktif = self.app.nav_icons["karantina"]
+        self.assertNotEqual(
+            aktif.itemcget(aktif.find_all()[0], "fill"),
+            warna_biasa,
+            "warna ikon menu aktif sama dengan menu biasa",
+        )
+        self.assertNotEqual(
+            aktif.cget("bg"), latar_biasa, "latar ikon menu aktif tidak dibedakan"
+        )
+        # Menu yang tidak aktif harus kembali ke warna biasa.
+        self.assertEqual(
+            self.app.nav_icons["beranda"].itemcget(
+                self.app.nav_icons["beranda"].find_all()[0], "fill"
+            ),
+            warna_biasa,
+            "ikon menu lama tidak kembali ke warna biasa",
+        )
+        self.app._mark_active("beranda")
+
+    def test_clicking_the_icon_opens_the_menu(self) -> None:
+        """Klik tepat di atas ikon harus membuka menu, bukan diabaikan.
+
+        Canvas diletakkan di atas tombol, jadi tanpa pengikatan klik ia menelan
+        klik dan menu terasa mati di bagian kiri tombol.
+        """
+        self.root.update()
+        ikon = self.app.nav_icons["karantina"]
+        self.assertTrue(
+            ikon.bind("<Button-1>"),
+            "ikon tidak mengikat klik, sehingga klik di atasnya tidak berfungsi",
+        )

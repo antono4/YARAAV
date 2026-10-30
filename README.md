@@ -450,6 +450,7 @@ project/
 │   ├── settings.py            ← pengaturan pengguna (JSON, izin terbatas)
 │   ├── theme.py               ← palet warna tema terang
 │   ├── splash.py              ← layar pembuka saat program dijalankan
+│   ├── icons.py               ← ikon menu, digambar vektor (tanpa berkas gambar)
 │   ├── dialogs.py             ← jendela pengaturan, pembaruan, karantina, asisten
 │   ├── ai/                    ← bagian kecerdasan buatan
 │   │   ├── base.py            ← pintu tunggal ke model bahasa (3 penyedia)
@@ -463,7 +464,7 @@ project/
 ├── assets/                    ← ikon aplikasi
 ├── tests/
 │   ├── fixtures.py            ← pembuat berkas PE untuk pengujian
-│   ├── test_core.py           ← 161 pengujian mesin dan antarmuka
+│   ├── test_core.py           ← 169 pengujian mesin dan antarmuka
 │   └── test_ai.py             ← 88 pengujian bagian AI
 ├── docs/                      ← gambar untuk README
 ├── tools/                     ← skrip bantu (ikon, folder contoh, tangkapan layar)
@@ -548,9 +549,9 @@ membuat SQLite melaporkan `database is locked`.
 xvfb-run -a ./run_tests.sh
 ```
 
-249 pengujian, mencakup keenam mesin, karantina, orkestrator, laporan,
-pengaturan, bagian AI, perlindungan waktu nyata, layar pembuka, tata letak
-antarmuka, kontras warna (dihitung sebagai angka WCAG, bukan dinilai dari
+257 pengujian, mencakup keenam mesin, karantina, orkestrator, laporan,
+pengaturan, bagian AI, perlindungan waktu nyata, layar pembuka, ikon menu,
+tata letak antarmuka, kontras warna (dihitung sebagai angka WCAG, bukan dinilai dari
 gambar), dan berkas build. Pengujian yang memerlukan ClamAV dilewati otomatis
 bila ClamAV tidak terpasang.
 
@@ -595,6 +596,18 @@ hanya melihat ukuran — kesalahan paling umum saat memakai PCA.
 `anomaly.py` tidak memuat `SEV_MALWARE` sama sekali, sehingga tidak ada jalan
 bagi AI untuk menuduh malware. Ada juga pengujian yang memeriksa bahwa larangan
 itu benar-benar terkirim ke penyedia AI — bukan hanya ada di dalam kode.
+
+**Ikon digambar sebagai vektor, bukan disimpan sebagai gambar.** Emoji tidak
+dipakai sama sekali: di Windows tanpa font emoji, emoji tampil sebagai kotak
+kosong. Berkas PNG juga tidak dipakai, karena itu akan menambah Pillow sebagai
+kebutuhan saat program dijalankan — Pillow sekarang hanya dipakai alat bantu
+pembuatan ikon. Ikon digambar di atas `tk.Canvas`, dan karena tombol Tk tidak
+bisa memuat dua warna teks, ikon diletakkan di atas tombol dengan `place()`;
+klik di atas ikon tetap diteruskan ke tombol, kalau tidak bagian kiri tombol
+akan terasa mati. Pada ukuran 16 px, roda gigi untuk menu Pengaturan berubah
+jadi gumpalan yang tidak terbaca, jadi diganti lambang penggeser. Ikon juga
+diberi margin 2 px, karena gambar yang menyentuh tepi canvas terpotong setengah
+dan terlihat penyok.
 
 **Warna antarmuka diuji sebagai angka.** Setiap pasangan teks/latar dihitung
 rasio kontras WCAG-nya dan harus lolos 4,5:1. Ini deterministik dan tidak
