@@ -20,6 +20,8 @@ import os
 import subprocess
 import sys
 import time
+import shutil
+import tempfile
 import tkinter as tk
 from unittest import mock
 
@@ -140,6 +142,40 @@ def main() -> int:
         _grab(target_path, app.root)
         captures.append((label, target_path))
         print(f"tangkapan layar ({label}) disimpan: {target_path}")
+
+    # --- Perlindungan waktu nyata: bukti nyata, bukan hiasan ---------------- #
+    # Pemantauan dinyalakan pada folder demo, lalu satu berkas berbahaya
+    # dijatuhkan. Yang difoto adalah log yang benar-benar dihasilkan mesin,
+    # bukan teks yang ditempel.
+    rtp_dir = tempfile.mkdtemp(prefix="scanguard-rtp-demo-")
+    app.settings.rtp_folders = [rtp_dir]
+    app.settings.rtp_interval = 1.0
+    app.settings.rtp_auto_quarantine = False
+    app.clear_log()
+    if app.start_rtp():
+        # Tangkapan ini mewakili halaman Perlindungan Nyata, jadi menunya
+        # ditandai aktif seperti setelah pengguna menekannya.
+        app._mark_active("rtp")
+        root.update()
+        time.sleep(0.3)
+        with open(os.path.join(rtp_dir, "update_windows.bat"), "w") as handle:
+            handle.write("@echo off\r\nvssadmin delete shadows /all /quiet\r\n")
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            root.update()
+            if "PANTAU" in app.log.get("1.0", "end"):
+                break
+            time.sleep(0.05)
+        root.update()
+        time.sleep(0.3)
+        app.log.see("end")
+        root.update()
+        time.sleep(0.3)
+        rtp_path = os.path.join(target_dir, "tangkapan-perlindungan-nyata.png")
+        _grab(rtp_path, app.root)
+        print(f"tangkapan layar (perlindungan nyata) disimpan: {rtp_path}")
+        app.stop_rtp()
+    shutil.rmtree(rtp_dir, ignore_errors=True)
 
     # --- Jendela Asisten AI -------------------------------------------------- #
     # Dibuka setelah pemindaian selesai supaya bahan jawabannya sudah ada.

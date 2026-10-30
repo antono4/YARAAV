@@ -9,6 +9,7 @@ bagian dari program:
                         dalam kode**, dan tidak pernah dicatat ke log.
 * `exclusions`     - daftar potongan path yang tidak ingin dipindai
 * `auto_quarantine` - memindahkan temuan MALWARE ke karantina secara otomatis
+* `rtp_*`          - perlindungan waktu nyata: folder pantauan dan jeda
 * `ai_*`           - pengaturan kecerdasan buatan: penyedia, model, dan kunci
                      API. **Disimpan di berkas milik pengguna dengan izin baca
                      terbatas, dan tidak pernah dicatat ke log.** Kunci juga bisa
@@ -59,6 +60,21 @@ class Settings:
     # Isi berkas ikut dikirim ke model. Bawaannya mati: menyalakannya berarti
     # isi berkas pengguna keluar dari komputernya.
     ai_send_snippet: bool = False
+
+    # --- Perlindungan waktu nyata (RTP) ------------------------------------ #
+    # Memantau folder dan memeriksa berkas yang baru muncul. Bawaannya mati:
+    # fitur yang berjalan terus di latar belakang sebaiknya dinyalakan dengan
+    # sadar oleh pengguna, bukan diam-diam.
+    rtp_enabled: bool = False
+    rtp_folders: list[str] = field(default_factory=list)
+    rtp_interval: float = 2.0
+    # Memeriksa berkas bersih juga. Bawaannya mati: folder yang ramai berkas
+    # bersih akan memenuhi log tanpa ada yang perlu ditindak.
+    rtp_report_clean: bool = False
+    # Memindahkan temuan MALWARE ke karantina sendiri. Bawaannya mati: ini
+    # memindahkan berkas pengguna tanpa ditanya, dan salah deteksi berarti
+    # berkas pengguna berpindah tanpa diminta.
+    rtp_auto_quarantine: bool = False
 
     @classmethod
     def load(cls) -> "Settings":

@@ -37,6 +37,12 @@ dan log berwarna per tingkat bahaya di bawah. Panel kiri berisi navigasi:
 
 ![Bagian awal log pemindaian](docs/tangkapan-jendela-utama-atas.png)
 
+**Perlindungan waktu nyata.** Pemantauan dinyalakan pada folder kosong, lalu
+satu berkas berbahaya dijatuhkan ke dalamnya. Yang muncul di log adalah hasil
+mesin sungguhan:
+
+![Perlindungan waktu nyata menangkap berkas yang baru muncul](docs/tangkapan-perlindungan-nyata.png)
+
 **Asisten AI**, menjawab pertanyaan tanpa kunci API sekalipun:
 
 ![Jendela Asisten AI](docs/tangkapan-asisten-ai.png)
@@ -135,6 +141,10 @@ deteksinya berkurang. Keterangan penyebabnya tercetak tepat di bawahnya.
    ditandai, apa arti sebuah temuan, atau apa yang sebaiknya dilakukan.
    Tanpa kunci API ia menjawab dari penjelasan bawaan program; dengan kunci API
    pertanyaan bebas diteruskan ke model. Rinciannya di bagian 6.
+
+7. **Perlindungan Nyata** (panel kiri) — menyalakan pemantauan folder. Berkas
+   yang **baru muncul** di folder pantauan langsung diperiksa, dan temuan
+   MALWARE ditawarkan untuk dikarantina. Rinciannya di bagian 8.
 
 Panel kiri juga memuat **Karantina**, **Perbarui Basis Data**, dan
 **Pengaturan**. Menu yang sedang dibuka ditandai dengan sorotan oranye, jadi
@@ -430,8 +440,10 @@ project/
 │   ├── clamav_engine.py       ← pembungkus clamscan (mode batch)
 │   ├── quarantine.py          ← karantina aman + pemulihan byte-identik
 │   ├── scanner.py             ← orkestrator keempat mesin
+│   ├── realtime.py            ← perlindungan waktu nyata (pemantauan folder)
 │   ├── report.py              ← penyusun laporan teks
 │   ├── settings.py            ← pengaturan pengguna (JSON, izin terbatas)
+│   ├── theme.py               ← palet warna tema terang
 │   ├── dialogs.py             ← jendela pengaturan, pembaruan, karantina, asisten
 │   ├── ai/                    ← bagian kecerdasan buatan
 │   │   ├── base.py            ← pintu tunggal ke model bahasa (3 penyedia)
@@ -474,7 +486,54 @@ tombol terpotong, apakah setiap warna tingkat bahaya benar-benar muncul di
 layar (dihitung dari piksel), dan apakah ada gambar yang nyaris satu warna
 (tanda jendela gagal tergambar).
 
-## 8. Menjalankan pengujian
+## 8. Perlindungan waktu nyata (RTP)
+
+Fitur ini memantau folder dan memeriksa berkas yang **baru muncul**, tanpa
+menunggu pengguna menekan "Mulai Pindai".
+
+**Cara menyalakannya.** Buka menu **Perlindungan Nyata** di panel kiri. Bila
+belum ada folder pantauan, program langsung meminta Anda memilih satu. Statusnya
+selalu terlihat di kartu utama, misalnya:
+
+```
+Perlindungan waktu nyata: AKTIF - 37 berkas diperiksa, 2 mencurigakan
+```
+
+**Cara kerjanya.** Setiap beberapa detik program mendaftar berkas di folder
+pantauan, membandingkannya dengan daftar sebelumnya, lalu memeriksa yang baru
+atau berubah. Tidak ada pemantauan tingkat sistem operasi di sini, dan itu
+disengaja: cara ini bisa diperiksa siapa saja dengan membaca kodenya.
+
+### Batas yang harus Anda tahu
+
+- **Ini bukan pencegahan.** Berkasnya sudah ada di disk sebelum diperiksa.
+  Program melaporkan dan menawarkan karantina; ia tidak memblokir pemasangan
+  seperti antivirus komersial.
+- **Folder pantauan dibatasi 8 buah.** Setiap folder menambah satu penelusuran
+  penuh setiap putaran, jadi menambah banyak folder membuat pemantauan berat.
+- **Folder yang sangat besar membuat pemeriksaan lambat**, karena daftar berkas
+  dibaca ulang setiap putaran.
+- **Perubahan kecil pada berkas besar** memicu pemeriksaan ulang berkas itu.
+
+### Pengaturan
+
+Di **Pengaturan**, bagian *Perlindungan waktu nyata*:
+
+| Pilihan | Bawaan | Artinya |
+| --- | --- | --- |
+| Jeda antar pemeriksaan | 2 detik | Makin kecil makin responsif, makin besar makin ringan |
+| Tampilkan berkas bersih di log | mati | Kalau dinyalakan, folder yang ramai akan memenuhi log |
+| Pindahkan MALWARE ke karantina sendiri | **mati** | Kalau dinyalakan, berkas dipindahkan tanpa ditanya |
+
+Pilihan karantina otomatis sengaja dimatikan secara bawaan: ini memindahkan
+berkas pengguna tanpa konfirmasi, dan salah deteksi berarti berkas berpindah
+tanpa diminta. Menyalakannya adalah keputusan Anda.
+
+**Pemindaian manual menjeda pemantauan** selama berjalan, lalu melanjutkannya.
+Keduanya memakai basis data cache yang sama, dan dua penulis bersamaan bisa
+membuat SQLite melaporkan `database is locked`.
+
+## 9. Menjalankan pengujian
 
 ```bash
 ./run_tests.sh
@@ -483,9 +542,10 @@ layar (dihitung dari piksel), dan apakah ada gambar yang nyaris satu warna
 xvfb-run -a ./run_tests.sh
 ```
 
-221 pengujian, mencakup keenam mesin, karantina, orkestrator, laporan,
-pengaturan, bagian AI, tata letak antarmuka, kontras warna (dihitung sebagai
-angka WCAG, bukan dinilai dari gambar), dan berkas build. Pengujian yang memerlukan ClamAV
+242 pengujian, mencakup keenam mesin, karantina, orkestrator, laporan,
+pengaturan, bagian AI, perlindungan waktu nyata, tata letak antarmuka, kontras
+warna (dihitung sebagai angka WCAG, bukan dinilai dari gambar), dan berkas
+build. Pengujian yang memerlukan ClamAV
 dilewati otomatis bila ClamAV tidak terpasang.
 
 Pengujian memakai berkas sungguhan, bukan tiruan: basis data SQLite sungguhan,
@@ -494,7 +554,7 @@ berkas PE sungguhan (dibuat langsung dari struktur biner oleh
 Yang diganti hanya kotak dialog modal dan kecepatan waktu, karena keduanya tidak
 bisa dipakai di lingkungan tanpa layar.
 
-## 9. Bagaimana bagian yang sulit dikerjakan
+## 10. Bagaimana bagian yang sulit dikerjakan
 
 **Jendela tidak boleh membeku.** Pemindaian berjalan di thread pekerja, dan
 thread itu **tidak pernah menyentuh widget tkinter**. Ia hanya menaruh kejadian
@@ -541,7 +601,7 @@ lebih gelap (`#17694a`, **6,65:1**), dan warna aksen yang lebih terang tetap
 dipakai hanya sebagai isian ikon, bukan sebagai latar teks. Satu warna tidak
 bisa dipakai untuk keduanya.
 
-## 10. Lisensi dan penggunaan
+## 11. Lisensi dan penggunaan
 
 Proyek edukasi. Pindai hanya folder milik Anda sendiri. Program ini tidak
 mengunggah berkas apa pun ke internet; permintaan jaringan hanya dilakukan saat

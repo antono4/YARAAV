@@ -10,7 +10,7 @@ from tkinter import filedialog, messagebox, ttk
 from .ai.analyst import AiAnalyst, check_connection
 from .ai.assistant import answer_from_knowledge, suggested_questions
 from .ai.base import PROVIDERS, FileReport, build_client_from_settings
-from .config import APP_NAME, APP_VERSION, data_dir
+from .config import APP_NAME, MAX_WATCHED_FOLDERS, APP_VERSION, data_dir
 from .core import format_size, hash_file
 from .hashes import HashUpdater
 
@@ -241,6 +241,101 @@ class SettingsWindow(_BaseWindow):
                 font=("Segoe UI", 9),
                 anchor="w",
             ).pack(anchor="w")
+
+        # --- Perlindungan waktu nyata (RTP) --------------------------------- #
+        panel_rtp = self._panel(outer)
+        panel_rtp.pack(fill="x", pady=(10, 0))
+        self._label(
+            panel_rtp,
+            "Perlindungan waktu nyata",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors["panel"],
+        ).pack(anchor="w")
+        self._label(
+            panel_rtp,
+            "Memantau folder dan memeriksa berkas yang baru muncul. Berkas yang "
+            "sudah ada sebelum pemantauan dinyalakan tidak diperiksa lagi.\n"
+            "Ini memeriksa berkas yang sudah ada di disk, bukan memblokir "
+            "pemasangannya seperti antivirus komersial.",
+            bg=self.colors["panel"],
+            fg=self.colors["muted"],
+            font=("Segoe UI", 9),
+            justify="left",
+            wraplength=560,
+        ).pack(anchor="w", pady=(0, 6))
+
+        self.rtp_report_clean = tk.BooleanVar(value=self.settings.rtp_report_clean)
+        self.rtp_auto_quarantine = tk.BooleanVar(
+            value=self.settings.rtp_auto_quarantine
+        )
+        for text, var in (
+            ("Tampilkan berkas bersih di log pemantauan", self.rtp_report_clean),
+            (
+                "Pindahkan temuan MALWARE dari pemantauan ke karantina sendiri",
+                self.rtp_auto_quarantine,
+            ),
+        ):
+            tk.Checkbutton(
+                panel_rtp,
+                text=text,
+                variable=var,
+                bg=self.colors["panel"],
+                fg=self.colors["text"],
+                selectcolor=self.colors["bg"],
+                activebackground=self.colors["panel"],
+                activeforeground=self.colors["text"],
+                font=("Segoe UI", 9),
+                anchor="w",
+            ).pack(anchor="w")
+
+        baris_jeda = tk.Frame(panel_rtp, bg=self.colors["panel"])
+        baris_jeda.pack(fill="x", pady=(6, 0))
+        self._label(
+            baris_jeda,
+            "Jeda antar pemeriksaan (detik)",
+            bg=self.colors["panel"],
+            font=("Segoe UI", 9),
+        ).pack(side="left")
+        self.rtp_interval_var = tk.StringVar(value=f"{self.settings.rtp_interval:g}")
+        tk.Spinbox(
+            baris_jeda,
+            from_=1,
+            to=60,
+            increment=1,
+            width=5,
+            textvariable=self.rtp_interval_var,
+            bg=self.colors["panel"],
+            fg=self.colors["text"],
+            buttonbackground=self.colors["secondary"],
+            font=("Segoe UI", 9),
+        ).pack(side="left", padx=(8, 0))
+
+        self.rtp_folders_text = tk.Text(
+            panel_rtp,
+            height=4,
+            wrap="none",
+            bg=self.colors["bg"],
+            fg=self.colors["text"],
+            insertbackground=self.colors["text"],
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=self.colors["border"],
+            font=("Consolas", 9),
+        )
+        self.rtp_folders_text.pack(fill="x", pady=(6, 0))
+        if self.settings.rtp_folders:
+            self.rtp_folders_text.insert("1.0", "\n".join(self.settings.rtp_folders))
+        self._label(
+            panel_rtp,
+            "Satu folder per baris. Paling banyak "
+            f"{MAX_WATCHED_FOLDERS} folder; setiap folder menambah satu "
+            "penelusuran penuh tiap putaran.",
+            bg=self.colors["panel"],
+            fg=self.colors["muted"],
+            font=("Segoe UI", 8),
+            justify="left",
+            wraplength=560,
+        ).pack(anchor="w", pady=(2, 0))
 
         # --- Pengecualian --------------------------------------------------- #
         panel4 = self._panel(outer)
@@ -479,6 +574,19 @@ class SettingsWindow(_BaseWindow):
         self.settings.use_clamav = self.use_clamav.get()
         self.settings.auto_quarantine = self.auto_quarantine.get()
         self.settings.log_clean_files = self.log_clean.get()
+        self.settings.rtp_report_clean = self.rtp_report_clean.get()
+        self.settings.rtp_auto_quarantine = self.rtp_auto_quarantine.get()
+        try:
+            jeda = float(self.rtp_interval_var.get().replace(",", "."))
+        except ValueError:
+            # Nilai yang tidak masuk akal diganti bawaan, bukan membuat gagal.
+            jeda = 2.0
+        self.settings.rtp_interval = max(1.0, min(60.0, jeda))
+        self.settings.rtp_folders = [
+            baris.strip()
+            for baris in self.rtp_folders_text.get("1.0", "end").splitlines()
+            if baris.strip()
+        ][:MAX_WATCHED_FOLDERS]
         self.settings.ai_anomaly = self.ai_anomaly.get()
         self.settings.ai_explain = self.ai_explain.get()
         self.settings.ai_send_snippet = self.ai_snippet.get()

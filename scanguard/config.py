@@ -44,6 +44,11 @@ MAX_READ_BYTES = 16 * 1024 * 1024  # 16 MB
 MAX_HASH_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
 BIG_FILE_BYTES = 20 * 1024 * 1024  # 20 MB
 ENTROPY_PACKED_THRESHOLD = 7.2
+# --- Perlindungan waktu nyata (RTP) --------------------------------------- #
+# Batas jumlah folder pantauan. Setiap folder menambah satu penelusuran penuh
+# setiap putaran, jadi menambah banyak folder membuat pemantauan makin berat.
+MAX_WATCHED_FOLDERS = 8
+
 # Waktu maksimal untuk satu berkas. Berkas aneh (mis. named pipe atau berkas
 # jaringan yang menggantung) bisa memblokir; tanpa batas ini pemindaian tidak
 # pernah selesai.

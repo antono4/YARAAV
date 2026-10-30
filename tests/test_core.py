@@ -955,6 +955,24 @@ class TestSettings(TempCase):
 # --------------------------------------------------------------------------- #
 
 
+def _safe_close(app, root: tk.Tk) -> None:
+    """Batalkan callback terjadwal lalu hancurkan jendela.
+
+    Pengujian yang menghancurkan jendela tanpa lewat on_close() meninggalkan
+    callback root.after() yang masih terjadwal. Saat Tk memprosesnya setelah
+    jendela hancur, ia mencetak 'invalid command name ..._pump_queue'. Itu
+    kebisingan harness uji (banyak root Tk dalam satu proses), bukan bug
+    program, tetapi membuat keluaran uji sulit dibaca.
+    """
+    try:
+        if app._pump_job is not None:
+            root.after_cancel(app._pump_job)
+            app._pump_job = None
+    except (tk.TclError, ValueError):
+        pass
+    _safe_destroy(root)
+
+
 def _safe_destroy(root: tk.Tk) -> None:
     """Hancurkan jendela, abaikan bila sudah hancur.
 
@@ -1507,3 +1525,267 @@ class TestFillOnlyColours(unittest.TestCase):
             [],
             "warna khusus isian dipakai sebagai warna teks: " + ", ".join(pelanggaran),
         )
+
+
+class TestRealtimeMonitor(TempCase):
+    """Perlindungan waktu nyata: berkas sungguhan, mesin sungguhan.
+
+    Tidak ada berkas yang dipalsukan di sini. Yang diuji adalah janji intinya:
+    berkas yang sudah ada sebelum pemantauan dinyalakan tidak dilaporkan,
+    berkas baru diperiksa, dan berkas berbahaya benar-benar terdeteksi.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        from scanguard.realtime import RealtimeMonitor
+        from scanguard.scanner import ScanEngine
+
+        self.RealtimeMonitor = RealtimeMonitor
+        self.pantau = os.path.join(self.tmp, "pantau")
+        os.makedirs(self.pantau, exist_ok=True)
+        engine = ScanEngine(
+            database=HashDatabase(os.path.join(self.tmp, "hash.db")),
+            quarantine=Quarantine(os.path.join(self.tmp, "karantina")),
+            use_clamav=False,
+        )
+        engine.prepare()
+        self.engine = engine
+        self.kejadian: list = []
+        self.monitor = RealtimeMonitor(
+            engine, self.kejadian.append, [self.pantau], interval=0.2
+        )
+        self.addCleanup(self.monitor.stop)
+
+    def _tunggu(self, syarat, batas: float = 15.0) -> bool:
+        deadline = time.time() + batas
+        while time.time() < deadline:
+            if syarat():
+                return True
+            time.sleep(0.05)
+        return False
+
+    def _tulis(self, nama: str, isi: str) -> str:
+        path = os.path.join(self.pantau, nama)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(isi)
+        return path
+
+    def test_existing_files_are_not_reported_as_new(self) -> None:
+        """Berkas yang sudah ada sebelum pemantauan bukan berkas "baru"."""
+        self._tulis("sudah-ada.txt", "isi lama")
+        self.monitor.start()
+        # Ditunggu cukup lama untuk beberapa putaran; kalau salah, berkas lama
+        # pasti sudah dilaporkan.
+        time.sleep(0.7)
+        self.assertEqual(self.kejadian, [], "berkas lama dilaporkan sebagai baru")
+
+    def test_new_clean_file_is_checked_but_has_no_finding(self) -> None:
+        self.monitor.start()
+        self._tulis("bersih.txt", "halo dunia\n" * 20)
+        self.assertTrue(
+            self._tunggu(lambda: len(self.kejadian) >= 1),
+            "berkas baru tidak terdeteksi",
+        )
+        event = self.kejadian[0]
+        self.assertEqual(event.action, "baru")
+        self.assertTrue(event.clean, f"berkas bersih malah punya temuan: {event.findings}")
+        self.assertIsNone(event.severity)
+
+    def test_malware_is_detected_by_the_real_engine(self) -> None:
+        """Berkas berbahaya sungguhan harus terdeteksi dan diberi tingkat."""
+        self.monitor.start()
+        self._tulis(
+            "jahat.bat",
+            "@echo off\r\nvssadmin delete shadows /all /quiet\r\n",
+        )
+        self.assertTrue(
+            self._tunggu(lambda: any(e.severity for e in self.kejadian)),
+            "berkas berbahaya tidak terdeteksi",
+        )
+        event = next(e for e in self.kejadian if e.severity)
+        self.assertEqual(event.severity, config.SEV_MALWARE)
+        self.assertTrue(event.findings, "tingkat ada tapi tidak ada temuannya")
+
+    def test_changed_file_is_reported_as_changed(self) -> None:
+        self.monitor.start()
+        path = self._tulis("berubah.txt", "awal")
+        self.assertTrue(self._tunggu(lambda: len(self.kejadian) >= 1))
+        # Ukuran dan waktu ubah harus berbeda; di sistem berkas dengan resolusi
+        # waktu kasar, menulis dengan panjang berbeda menjamin terdeteksi.
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("awal ditambah lagi supaya ukurannya berbeda")
+        self.assertTrue(
+            self._tunggu(lambda: any(e.action == "berubah" for e in self.kejadian)),
+            "perubahan berkas tidak terdeteksi",
+        )
+
+    def test_pause_stops_checking_and_resume_continues(self) -> None:
+        self.monitor.start()
+        self.monitor.pause()
+        # Beri waktu satu putaran penuh: jeda berlaku mulai putaran berikutnya,
+        # dan putaran yang sedang berjalan harus selesai lebih dulu.
+        time.sleep(0.4)
+        self._tulis("saat-jeda.txt", "x")
+        time.sleep(0.7)
+        self.assertEqual(self.kejadian, [], "berkas diperiksa padahal sedang dijeda")
+        self.monitor.resume()
+        self.assertTrue(
+            self._tunggu(lambda: len(self.kejadian) >= 1),
+            "berkas tidak diperiksa setelah pemantauan dilanjutkan",
+        )
+
+    def test_stop_actually_stops_the_thread(self) -> None:
+        self.monitor.start()
+        self.assertTrue(self.monitor.running)
+        self.monitor.stop()
+        self.assertFalse(self.monitor.running, "thread pemantau masih hidup")
+
+    def test_data_directory_is_never_watched(self) -> None:
+        """Folder data dilewati, agar berkas karantina tidak dikarantina lagi.
+
+        Tanpa pengecualian ini, berkas yang baru dipindahkan ke karantina
+        terlihat sebagai berkas baru, lalu dipindahkan lagi - berputar tanpa
+        henti.
+        """
+        karantina = os.path.join(config.data_dir(), "karantina")
+        os.makedirs(karantina, exist_ok=True)
+        self.assertTrue(
+            self.monitor._is_excluded(os.path.join(karantina, "x.qtn")),
+            "berkas di folder data tidak dikecualikan",
+        )
+
+
+class TestDiffSnapshots(unittest.TestCase):
+    """Perbandingan dua daftar berkas: murni, tanpa sistem berkas."""
+
+    def test_new_changed_and_removed(self) -> None:
+        from scanguard.realtime import diff_snapshots
+
+        sebelum = {"/a": (1, 10), "/b": (2, 20)}
+        sesudah = {"/a": (1, 10), "/b": (3, 30), "/c": (4, 40)}
+        self.assertEqual(
+            diff_snapshots(sebelum, sesudah),
+            [("/b", "berubah"), ("/c", "baru")],
+        )
+
+    def test_removed_files_are_not_reported(self) -> None:
+        """Berkas yang hilang tidak perlu diperiksa."""
+        from scanguard.realtime import diff_snapshots
+
+        self.assertEqual(diff_snapshots({"/a": (1, 1)}, {}), [])
+
+
+class TestRealtimeGui(TempCase):
+    """Perlindungan waktu nyata lewat GUI: apakah hasilnya benar-benar terlihat.
+
+    Uji ini ada karena dua bug yang tertangkap saat pengembangan:
+    kejadian "log" dari thread pekerja dibuang tanpa penangan, dan pemanggilan
+    karantina memakai argumen yang tidak ada. Keduanya membuat fitur tampak
+    jalan (tidak ada kesalahan yang terlihat) padahal hasilnya tidak sampai ke
+    pengguna.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        try:
+            self.root, self.app, self.p1, self.p2 = _make_app()
+        except tk.TclError as error:
+            self.skipTest(f"tkinter tidak bisa membuka jendela: {error}")
+        self.addCleanup(self.p2.stop)
+        self.addCleanup(self.p1.stop)
+        self.addCleanup(_safe_close, self.app, self.root)
+        self.pantau = os.path.join(self.tmp, "pantau")
+        os.makedirs(self.pantau, exist_ok=True)
+
+    def _pompa(self, detik: float) -> None:
+        """Layani jendela selama beberapa detik, seperti loop utama Tk.
+
+        root.update() saja tidak cukup: pengosongan antrean dijadwalkan dengan
+        root.after(80, ...), dan tanpa jeda waktu callback itu tidak pernah
+        dijalankan.
+        """
+        deadline = time.time() + detik
+        while time.time() < deadline:
+            self.root.update()
+            time.sleep(0.02)
+
+    def _pompa_sampai(self, syarat, batas: float = 20.0) -> bool:
+        deadline = time.time() + batas
+        while time.time() < deadline:
+            self.root.update()
+            if syarat():
+                return True
+            time.sleep(0.02)
+        return False
+
+    def test_log_events_from_worker_reach_the_log(self) -> None:
+        """Kejadian "log" harus sampai ke widget, bukan dibuang diam-diam."""
+        self.app.clear_log()
+        self.app.queue.put(("log", ("PESAN-UJI\n", config.TAG_OK)))
+        self._pompa(0.6)
+        self.assertIn(
+            "PESAN-UJI",
+            self.app.log.get("1.0", "end"),
+            "kejadian log dari thread pekerja hilang",
+        )
+
+    def test_rtp_detects_and_quarantines_a_dropped_file(self) -> None:
+        self.app.settings.rtp_folders = [self.pantau]
+        self.app.settings.rtp_interval = 0.2
+        self.app.settings.rtp_auto_quarantine = True
+        self.app.clear_log()
+        self.assertTrue(self.app.start_rtp(), "pemantauan gagal dinyalakan")
+        self.addCleanup(self.app.stop_rtp)
+        self._pompa(0.3)
+
+        path = os.path.join(self.pantau, "jahat.bat")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("@echo off\r\nvssadmin delete shadows /all /quiet\r\n")
+
+        self.assertTrue(
+            self._pompa_sampai(lambda: "PANTAU" in self.app.log.get("1.0", "end")),
+            "temuan pemantauan tidak muncul di log",
+        )
+        isi = self.app.log.get("1.0", "end")
+        self.assertIn(config.SEV_MALWARE, isi)
+        # Yang penting: berkasnya benar-benar dipindahkan, bukan hanya dicatat.
+        self.assertTrue(
+            self._pompa_sampai(lambda: not os.path.exists(path)),
+            "berkas berbahaya tidak dipindahkan ke karantina",
+        )
+        self.assertTrue(
+            self.app.quarantine.active_entries(), "karantina kosong"
+        )
+
+    def test_manual_scan_pauses_then_resumes_the_monitor(self) -> None:
+        """Pemindaian manual dan pemantauan tidak boleh menulis bersamaan."""
+        self.app.settings.rtp_folders = [self.pantau]
+        self.app.settings.rtp_interval = 0.2
+        self.assertTrue(self.app.start_rtp())
+        self.addCleanup(self.app.stop_rtp)
+        self.app.folder_var.set(self.pantau)
+        self.app.start_scan()
+        self.assertTrue(self.app.rtp.paused, "pemantauan tidak dijeda")
+        deadline = time.time() + 120
+        while self.app.scanning and time.time() < deadline:
+            self.root.update()
+            time.sleep(0.01)
+        self.root.update()
+        self.assertFalse(self.app.rtp.paused, "pemantauan tidak dilanjutkan")
+
+    def test_closing_stops_the_monitor_thread(self) -> None:
+        """Menutup jendela harus menghentikan thread pemantau.
+
+        Kalau tidak, thread itu bisa menulis ke basis data yang sudah ditutup.
+        """
+        self.app.settings.rtp_folders = [self.pantau]
+        self.assertTrue(self.app.start_rtp())
+        self.app.on_close()
+        self.assertFalse(self.app.rtp.running, "thread pemantau masih hidup")
+        # Jendela sudah dihancurkan. on_close membatalkan callback terjadwal,
+        # tetapi Tk kadang masih melaporkan 'invalid command name ..._pump_queue'
+        # saat pengujian berakhir; itu perilaku Tk, bukan bug program. Tandai
+        # supaya pembersihan tidak menghancurkan jendela dua kali.
+        self.app._closed = True
+        self.p1.stop()
+        self.p2.stop()

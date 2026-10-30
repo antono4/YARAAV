@@ -23,6 +23,7 @@ from .ai.assistant import Assistant
 from .ai.base import build_client_from_settings
 from .ai.cache import AiCache
 from .config import (
+    MAX_WATCHED_FOLDERS,
     APP_NAME,
     APP_TAGLINE,
     APP_VERSION,
@@ -43,6 +44,7 @@ from .dialogs import (
 )
 from .hashes import HashDatabase
 from .quarantine import Quarantine
+from .realtime import RtEvent, RealtimeMonitor
 from .report import build_report
 from .scanner import ScanEngine
 from .settings import Settings
@@ -78,6 +80,9 @@ class ScanGuardApp:
         self.engine = self._make_engine()
         self.ai_cache = AiCache()
         self.assistant = Assistant()
+        # Perlindungan waktu nyata. Objeknya dibuat di sini tetapi belum
+        # dijalankan; pengguna yang memutuskan menyalakannya.
+        self.rtp: RealtimeMonitor | None = None
 
         self._build_window()
         self._build_ui()
@@ -85,6 +90,7 @@ class ScanGuardApp:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self._pump_queue()
+        self._update_rtp_status()
         self._announce_startup()
 
     # ----------------------------------------------------------- persiapan -- #
@@ -229,6 +235,7 @@ class ScanGuardApp:
             ("beranda", "Beranda", self.show_home),
             ("pindai", "Pindai Cepat", self.choose_folder),
             ("karantina", "Karantina", self.open_quarantine),
+            ("rtp", "Perlindungan Nyata", self.toggle_rtp),
             ("asisten", "Asisten AI", self.open_assistant),
             ("pembaruan", "Perbarui Basis Data", self.open_update),
             ("pengaturan", "Pengaturan", self.open_settings),
@@ -484,6 +491,19 @@ class ScanGuardApp:
             anchor="w",
         ).pack(fill="x", pady=(4, 0))
 
+        # Status perlindungan waktu nyata selalu terlihat di kartu utama:
+        # fitur yang berjalan di latar belakang harus kelihatan keadaannya,
+        # bukan tersembunyi di dalam menu.
+        self.rtp_var = tk.StringVar(value="")
+        tk.Label(
+            wrapper,
+            textvariable=self.rtp_var,
+            bg=self.colors["panel"],
+            fg=self.colors["muted"],
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).pack(fill="x", pady=(2, 0))
+
     def _build_log(self, parent: tk.Frame) -> None:
         wrapper = tk.Frame(parent, bg=self.colors["panel"], padx=18, pady=10)
         # expand=True: area log mengisi seluruh sisa ruang di bawah footer.
@@ -652,6 +672,12 @@ class ScanGuardApp:
     def start_scan(self) -> None:
         if self.scanning:
             return
+        # Pemantauan dijeda dulu: pemindaian manual dan pemantauan memakai
+        # basis data cache yang sama, dan dua penulis bersamaan bisa membuat
+        # SQLite melaporkan "database is locked".
+        if self.rtp is not None and self.rtp.running:
+            self.rtp.pause()
+            self._update_rtp_status()
         folder = self.folder_var.get()
         if not folder or not os.path.isdir(folder):
             messagebox.showwarning(
@@ -773,6 +799,22 @@ class ScanGuardApp:
             self._append_log(f"    ({finding.engine}) {finding.rule}\n")
             self._append_log(f"    {finding.detail}\n")
 
+        elif kind == "log":
+            # Dipakai thread pekerja untuk menitipkan satu baris log. Tanpa
+            # cabang ini pesannya dibuang tanpa pesan kesalahan apa pun, dan
+            # pengguna tidak melihat konfirmasi setelah mengarantina berkas.
+            text, tag = payload
+            self._append_log(text, tag)
+
+        elif kind == "rtp":
+            self._render_rtp(payload)
+
+        elif kind == "rtp_error":
+            self._append_log(
+                f"\n[PANTAU] Kesalahan pemantauan: {payload}\n",
+                SEVERITY_TAGS[SEV_NOTE],
+            )
+
         elif kind == "done":
             self._render_done(payload)
 
@@ -871,6 +913,10 @@ class ScanGuardApp:
         # dikembalikan ke Beranda. Tanpa ini, menu "Pindai Cepat" tetap
         # tersorot padahal yang terlihat di layar adalah halaman Beranda.
         self._mark_active("beranda")
+        # Pemantauan dilanjutkan setelah pemindaian manual selesai.
+        if self.rtp is not None and self.rtp.running:
+            self.rtp.resume()
+            self._update_rtp_status()
 
         self._offer_quarantine(summary)
 
@@ -893,6 +939,176 @@ class ScanGuardApp:
         }.get(nada, self.colors["accent"])
         self.shield_canvas.delete("all")
         self._draw_shield(self.shield_canvas, outline=warna_garis)
+
+    # ------------------------------------------------- perlindungan nyata -- #
+
+    def toggle_rtp(self) -> None:
+        """Nyalakan atau matikan perlindungan waktu nyata."""
+        self._mark_active("rtp")
+        if self.rtp is not None and self.rtp.running:
+            self.stop_rtp()
+            return
+        self.start_rtp()
+
+    def start_rtp(self) -> bool:
+        """Mulai memantau folder. Kembalikan False bila tidak ada folder pantauan."""
+        if self.rtp is not None and self.rtp.running:
+            return True
+        folders = [f for f in self.settings.rtp_folders if os.path.isdir(f)]
+        if not folders:
+            self._append_log(
+                "\nPerlindungan waktu nyata belum punya folder pantauan. "
+                "Tambahkan lewat menu Perlindungan Nyata.\n",
+                SEVERITY_TAGS[SEV_NOTE],
+            )
+            self.choose_rtp_folder()
+            folders = [f for f in self.settings.rtp_folders if os.path.isdir(f)]
+            if not folders:
+                return False
+
+        self.rtp = RealtimeMonitor(
+            engine=self.engine,
+            on_event=self._rtp_event,
+            folders=folders,
+            interval=self.settings.rtp_interval,
+            on_error=self._rtp_error,
+        )
+        self.rtp.start()
+        self._update_rtp_status()
+        self._append_log(
+            "\nPerlindungan waktu nyata AKTIF. Memantau "
+            + ", ".join(folders)
+            + f". Jeda {self.settings.rtp_interval:g} detik.\n",
+            TAG_OK,
+        )
+        self._append_log(
+            "Catatan: ini memeriksa berkas yang sudah ada di disk, bukan "
+            "memblokir pemasangannya.\n",
+            TAG_INFO,
+        )
+        return True
+
+    def stop_rtp(self) -> None:
+        if self.rtp is None:
+            return
+        self.rtp.stop()
+        self._update_rtp_status()
+        self._append_log(
+            f"\nPerlindungan waktu nyata DIMATIKAN. "
+            f"{self.rtp.checked} berkas diperiksa, {self.rtp.found} mencurigakan.\n",
+            TAG_INFO,
+        )
+
+    def choose_rtp_folder(self) -> None:
+        """Minta pengguna memilih folder yang dipantau."""
+        folder = filedialog.askdirectory(
+            title="Pilih folder yang dipantau terus-menerus"
+        )
+        if not folder:
+            return
+        folder = os.path.abspath(folder)
+        if folder in self.settings.rtp_folders:
+            self._append_log(f"Folder itu sudah dipantau: {folder}\n", TAG_INFO)
+            return
+        if len(self.settings.rtp_folders) >= MAX_WATCHED_FOLDERS:
+            messagebox.showinfo(
+                "Batas folder",
+                f"Paling banyak {MAX_WATCHED_FOLDERS} folder dipantau sekaligus. "
+                "Setiap folder menambah satu penelusuran penuh setiap putaran, "
+                "jadi menambah banyak folder membuat pemantauan berat.",
+                parent=self.root,
+            )
+            return
+        self.settings.rtp_folders.append(folder)
+        self.settings.save()
+        if self.rtp is not None:
+            self.rtp.add_folder(folder)
+        self._update_rtp_status()
+        self._append_log(f"Folder ditambahkan ke pantauan: {folder}\n", TAG_OK)
+
+    def _rtp_event(self, event: RtEvent) -> None:
+        """Dipanggil dari thread pemantau. Hanya boleh menaruh ke antrean.
+
+        Menyentuh widget dari thread lain membuat jendela membeku atau program
+        mati, jadi kejadiannya diteruskan ke main thread lewat antrean yang
+        sudah ada.
+        """
+        self.queue.put(("rtp", event))
+
+    def _rtp_error(self, error: Exception) -> None:
+        self.queue.put(("rtp_error", str(error)))
+
+    def _render_rtp(self, event: RtEvent) -> None:
+        """Tampilkan satu kejadian pemantauan. Dijalankan di main thread."""
+        nama = os.path.basename(event.path) or event.path
+        if event.error:
+            self._append_log(
+                f"\n[PANTAU] {event.path}\n    {event.error}\n",
+                SEVERITY_TAGS[SEV_NOTE],
+            )
+            return
+        if event.clean:
+            # Berkas bersih hanya ditampilkan bila pengguna memang minta;
+            # folder yang ramai akan memenuhi log tanpa ada yang perlu dibaca.
+            if self.settings.rtp_report_clean:
+                self._append_log(f"[PANTAU] {nama}: bersih\n", TAG_INFO)
+            self._update_rtp_status()
+            return
+        self._append_log(
+            f"\n[PANTAU {event.severity}] {event.path}\n", event.severity
+        )
+        self._append_log(f"    ({event.action}) {nama}\n", TAG_INFO)
+        for finding in event.findings:
+            self._append_log(f"    ({finding.engine}) {finding.rule}\n")
+            self._append_log(f"    {finding.detail}\n")
+        # Berkas berbahaya yang baru muncul langsung ditawarkan untuk
+        # dikarantina, atau dipindahkan sendiri bila pengguna memintanya.
+        if event.severity == SEV_MALWARE:
+            self._handle_rtp_malware(event)
+        self._update_rtp_status()
+
+    def _handle_rtp_malware(self, event: RtEvent) -> None:
+        temuan = event.findings[0] if event.findings else None
+        if self.settings.rtp_auto_quarantine:
+            ok, pesan = self.quarantine.quarantine_file(
+                event.path,
+                engine=temuan.engine if temuan else "RTP",
+                rule=temuan.rule if temuan else "Pemantauan waktu nyata",
+                detail=temuan.detail if temuan else "",
+                severity=event.severity or SEV_NOTE,
+            )
+            if ok:
+                self._append_log(f"    Dipindahkan ke karantina. {pesan}\n", TAG_OK)
+            else:
+                self._append_log(
+                    f"    Gagal memindahkan ke karantina: {pesan}\n",
+                    SEVERITY_TAGS[SEV_NOTE],
+                )
+            return
+        jawab = messagebox.askyesno(
+            f"{APP_NAME} - berkas berbahaya",
+            f"Berkas ini baru muncul dan terdeteksi berbahaya:\n\n"
+            f"{event.path}\n\n"
+            f"Pindahkan ke karantina sekarang?",
+            parent=self.root,
+        )
+        if jawab:
+            self._quarantine_paths([event.path], None)
+
+    def _update_rtp_status(self) -> None:
+        """Perbarui label status RTP di kartu utama."""
+        if self.rtp is not None and self.rtp.running:
+            tambahan = " (dijeda)" if self.rtp.paused else ""
+            self.rtp_var.set(
+                f"Perlindungan waktu nyata: AKTIF{tambahan} - "
+                f"{self.rtp.checked} berkas diperiksa, {self.rtp.found} mencurigakan"
+            )
+        else:
+            jumlah = len(self.settings.rtp_folders)
+            self.rtp_var.set(
+                "Perlindungan waktu nyata: mati"
+                + (f" - {jumlah} folder siap dipantau" if jumlah else "")
+            )
 
     def _render_error(self, message: str) -> None:
         self.scanning = False
@@ -1025,6 +1241,15 @@ class ScanGuardApp:
         self.refresh_database_label()
         # Pengaturan AI bisa berubah, jadi klien lama tidak boleh dipakai lagi.
         self.assistant = Assistant()
+        # Pemantauan memakai objek mesin yang lama. Kalau pengaturan mesin
+        # berubah, pemantauan harus dihentikan dan dijalankan ulang dengan mesin
+        # yang baru; kalau tidak, ia memeriksa dengan pengaturan yang usang.
+        if self.rtp is not None and self.rtp.running:
+            self.rtp.stop()
+            self.rtp = None
+            self.start_rtp()
+        else:
+            self._update_rtp_status()
 
     # ------------------------------------------------------- kecerdasan AI -- #
 
@@ -1109,6 +1334,11 @@ class ScanGuardApp:
             ):
                 return
             self.stop_event.set()
+        if self.rtp is not None:
+            # Thread pemantau harus benar-benar berhenti sebelum basis data
+            # ditutup, kalau tidak ia bisa menulis ke basis data yang sudah
+            # ditutup dan mencetak kesalahan saat program keluar.
+            self.rtp.stop()
         try:
             self.db.close()
         except Exception:  # noqa: BLE001 - penutupan tidak boleh menghalangi keluar
