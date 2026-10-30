@@ -16,16 +16,45 @@ dua bagian kecerdasan buatan yang bekerja berdampingan:
 | **AI: deteksi anomali** | Model dilatih di komputer Anda dari berkas di folder yang sedang dipindai, lalu mencari berkas yang menyimpang. Bisa menyorot malware baru yang belum ada di basis data mana pun. | **Tidak** |
 | **AI: penjelasan temuan** | Model bahasa menjelaskan temuan dalam bahasa sehari-hari dan menjawab pertanyaan Anda. | Ya (kecuali Ollama) |
 
+## Tangkapan layar
+
+Semua gambar di bawah diambil dari program yang benar-benar berjalan. Folder
+contohnya dibuat oleh `tools/make_demo_folder.py`, berisi berkas teks yang
+kebetulan cocok dengan aturan YARA bawaan (bukan malware sungguhan), satu nama
+berkas berkedok ganda, dan satu berkas program besar. Jadi warna MALWARE,
+MENCURIGAKAN, dan PERLU DIPERIKSA di gambar muncul karena mesinnya memang
+mendeteksi, bukan karena lognya disunting.
+
+**Jendela utama setelah pemindaian.** Warna per tingkat bahaya, bilah kemajuan,
+dan daftar mesin yang ikut bekerja:
+
+![Jendela utama ScanGuard setelah pemindaian](docs/tangkapan-jendela-utama.png)
+
+**Bagian awal log** — nama mesin yang siap dipakai, termasuk deteksi anomali AI:
+
+![Bagian awal log pemindaian](docs/tangkapan-jendela-utama-atas.png)
+
+**Asisten AI**, menjawab pertanyaan tanpa kunci API sekalipun:
+
+![Jendela Asisten AI](docs/tangkapan-asisten-ai.png)
+
+**Pengaturan**, bagian kecerdasan buatan:
+
+![Jendela pengaturan bagian AI](docs/tangkapan-pengaturan.png)
+
 ## Baca ini lebih dulu: batas yang jujur
 
-Ini **bukan** pengganti Windows Defender atau antivirus resmi. Empat mesin di
-atas semuanya bekerja dengan cara yang sama: **mengenali apa yang sudah
-diketahui.** Akibatnya:
+Ini **bukan** pengganti Windows Defender atau antivirus resmi. Empat mesin
+pertama bekerja dengan cara yang sama: **mengenali apa yang sudah diketahui.**
+Deteksi anomali bekerja dengan cara yang berbeda — ia mencari yang *janggal*,
+bukan yang sudah tercatat — tetapi itu pun bukan bukti. Akibatnya:
 
 - Malware **baru** yang belum pernah tercatat di basis data mana pun **tidak akan
-  dikenali**. Ini berlaku juga untuk antivirus komersial, tetapi mereka menutupi
-  celah itu dengan analisis perilaku, sandbox, dan telemetri dari jutaan
-  komputer — hal-hal yang tidak dimiliki program ini.
+  dikenali** oleh mesin-mesin yang mencocokkan tanda tangan. Ini berlaku juga
+  untuk antivirus komersial, tetapi mereka menutupi celah itu dengan analisis
+  perilaku, sandbox, dan telemetri dari jutaan komputer — hal-hal yang tidak
+  dimiliki program ini. Deteksi anomali menutupi sebagian celah itu, dengan
+  menandai berkas yang menyimpang dari sekitarnya.
 - Program ini **tidak memantau berkas secara langsung** (tidak ada real-time
   protection). Ia memeriksa saat Anda menekan "Mulai Pindai".
 - Program ini **tidak memblokir** apa pun. Ia melaporkan dan menawarkan
@@ -97,6 +126,10 @@ deteksinya berkurang. Keterangan penyebabnya tercetak tepat di bawahnya.
    dijalankan, tetapi masih bisa dipulihkan utuh kapan saja.
 5. **Simpan Laporan** — menyimpan hasil lengkap ke berkas teks, termasuk hash
    dan daftar mesin yang menemukan apa.
+6. **Tanya AI** — membuka jendela asisten: tanyakan kenapa sebuah berkas
+   ditandai, apa arti sebuah temuan, atau apa yang sebaiknya dilakukan.
+   Tanpa kunci API ia menjawab dari penjelasan bawaan program; dengan kunci API
+   pertanyaan bebas diteruskan ke model. Rinciannya di bagian 6.
 
 ### Tiga tingkat temuan
 
@@ -104,7 +137,7 @@ deteksinya berkurang. Keterangan penyebabnya tercetak tepat di bawahnya.
 |---|---|---|
 | **MALWARE** | Bukti kuat. Hash cocok basis data, atau YARA menemukan pola yang jelas berbahaya, atau ClamAV mengenali tanda tangan virus. | EICAR, penghapusan shadow copy, impor penyuntikan kode |
 | **MENCURIGAKAN** | Pola yang lazim pada malware, tetapi bisa juga muncul di program sah. | Ekstensi ganda (`Faktur.pdf.exe`), impor mencurigakan dalam jumlah sedang |
-| **PERLU DIPERIKSA** | Petunjuk lemah. Hanya muncul bila terkumpul cukup banyak. | Section yang bisa ditulis sekaligus dijalankan, program berukuran tidak wajar |
+| **PERLU DIPERIKSA** | Petunjuk lemah. Hanya muncul bila terkumpul cukup banyak. | Section yang bisa ditulis sekaligus dijalankan, program berukuran tidak wajar, berkas yang menyimpang dari sekitarnya (AI) |
 
 Tingkat dipisahkan seperti ini dengan sengaja. Alat yang menuduh semua hal
 sebagai virus akan diabaikan penggunanya, dan alat yang diabaikan sama saja
@@ -142,9 +175,11 @@ build_exe.bat
 ```
 
 Skrip itu memasang kebutuhan, membuat ikon, lalu mengompilasi. Hasilnya:
-`dist\ScanGuard.exe`. Ukuran yang terukur pada pengujian Linux: **16,4 MB**
+`dist\ScanGuard.exe`. Ukuran yang terukur pada pengujian Linux: **16,5 MB**
 (build Windows biasanya sedikit lebih besar). Komponen terbesarnya adalah
-`libcrypto` yang dibawa yara-python, pustaka Python, dan pustaka Tcl/Tk.
+`libcrypto` yang dibawa yara-python, pustaka Python, dan pustaka Tcl/Tk. Bagian
+AI hanya menambah sekitar 0,1 MB, karena model anomali dihitung sendiri dan
+pemanggilan model bahasa memakai `urllib` dari pustaka standar.
 
 ### 4.2 Perintah manualnya
 
@@ -398,7 +433,8 @@ project/
 │   ├── fixtures.py            ← pembuat berkas PE untuk pengujian
 │   ├── test_core.py           ← 133 pengujian mesin dan antarmuka
 │   └── test_ai.py             ← 88 pengujian bagian AI
-├── tools/                     ← skrip bantu (ikon, tangkapan layar)
+├── docs/                      ← gambar untuk README
+├── tools/                     ← skrip bantu (ikon, folder contoh, tangkapan layar)
 ├── installer/ScanGuard.iss    ← skrip Inno Setup
 ├── ScanGuard.spec             ← konfigurasi PyInstaller
 ├── build_exe.bat              ← Python → .exe
@@ -406,6 +442,23 @@ project/
 ├── requirements.txt
 └── run_tests.sh
 ```
+
+### Membuat ulang tangkapan layar
+
+Gambar di README dibuat oleh dua skrip bantu, bukan diambil dengan tangan:
+
+```bash
+python3 tools/make_demo_folder.py /tmp/demo
+xvfb-run -a --server-args="-screen 0 1100x780x24" \
+    python3 tools/screenshot.py /tmp/demo docs
+```
+
+Skrip pertama membuat folder contoh yang memicu ketiga tingkat bahaya. Skrip
+kedua menjalankan GUI sungguhan, memindai folder itu, lalu menyimpan empat
+gambar ke `docs/`. Skrip kedua juga mencetak pemeriksaan tata letak: apakah
+tombol terpotong, apakah setiap warna tingkat bahaya benar-benar muncul di
+layar (dihitung dari piksel), dan apakah ada gambar yang nyaris satu warna
+(tanda jendela gagal tergambar).
 
 ## 8. Menjalankan pengujian
 

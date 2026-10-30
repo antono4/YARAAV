@@ -1349,3 +1349,84 @@ class TestPackagingFiles(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestReadmeImages(unittest.TestCase):
+    """Gambar README harus benar-benar ada dan benar-benar dipakai.
+
+    Gambar yang hilang membuat README menampilkan ikon rusak, dan itu terjadi
+    diam-diam: tidak ada yang gagal saat berkasnya dihapus atau diganti nama.
+    """
+
+    ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def _readme(self) -> str:
+        with open(os.path.join(self.ROOT, "README.md"), encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_every_image_link_points_to_an_existing_file(self) -> None:
+        import re
+
+        teks = self._readme()
+        tautan = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", teks)
+        self.assertTrue(tautan, "README tidak memuat satu gambar pun")
+        for relatif in tautan:
+            with self.subTest(gambar=relatif):
+                self.assertTrue(
+                    os.path.exists(os.path.join(self.ROOT, relatif)),
+                    f"gambar tidak ditemukan: {relatif}",
+                )
+
+    def test_every_image_file_is_used_somewhere(self) -> None:
+        """Gambar yang tidak dipakai hanya menambah berat repositori."""
+        folder = os.path.join(self.ROOT, "docs")
+        if not os.path.isdir(folder):
+            self.skipTest("folder docs belum ada")
+        teks = self._readme()
+        for nama in os.listdir(folder):
+            if nama.endswith(".png"):
+                with self.subTest(gambar=nama):
+                    self.assertIn(nama, teks, f"{nama} tidak dipakai di README")
+
+    def test_screenshots_are_not_blank(self) -> None:
+        """Tangkapan layar yang gagal tergambar hasilnya nyaris satu warna.
+
+        Jendela yang belum sempat digambar menghasilkan gambar berisi satu warna
+        latar. Ukurannya normal, jadi tanpa pemeriksaan ini kesalahannya tidak
+        terlihat sampai ada orang membuka README-nya.
+        """
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow tidak terpasang")
+        folder = os.path.join(self.ROOT, "docs")
+        if not os.path.isdir(folder):
+            self.skipTest("folder docs belum ada")
+        for nama in sorted(os.listdir(folder)):
+            if not nama.endswith(".png"):
+                continue
+            with self.subTest(gambar=nama):
+                with Image.open(os.path.join(folder, nama)) as gambar:
+                    warna = set(gambar.convert("RGB").get_flattened_data())
+                self.assertGreater(
+                    len(warna), 200, f"{nama} hanya punya {len(warna)} warna - gambar kosong?"
+                )
+
+    def test_screenshot_tool_crops_to_window(self) -> None:
+        """Tanpa pemangkasan, gambar berisi tepi hitam sebesar layar maya."""
+        sumber = self._read(("tools", "screenshot.py"))
+        self.assertIn("crop(", sumber)
+
+    def test_demo_folder_script_creates_no_real_malware(self) -> None:
+        """Folder contoh harus memakai teks biasa, bukan malware sungguhan.
+
+        Berkas EICAR akan langsung ditolak antivirus yang berjalan di komputer
+        pengembang, sehingga skripnya gagal separuh jalan tanpa sebab yang jelas.
+        """
+        sumber = self._read(("tools", "make_demo_folder.py"))
+        self.assertNotIn("EICAR-STANDARD", sumber)
+        self.assertIn("tidak berbahaya", sumber)
+
+    def _read(self, parts) -> str:
+        with open(os.path.join(self.ROOT, *parts), encoding="utf-8") as handle:
+            return handle.read()

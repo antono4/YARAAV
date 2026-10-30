@@ -1,16 +1,19 @@
 """Skrip bantu: buka GUI, pindai folder contoh, lalu simpan tangkapan layar.
 
-Dipakai untuk memverifikasi tampilan, bukan bagian dari aplikasi. Skrip ini
+Dipakai untuk memverifikasi tampilan dan untuk membuat gambar README. Skrip ini
 memeriksa dua hal yang sulit dilihat dengan mata: apakah tombol terpotong, dan
 apakah warna per tingkat bahaya benar-benar muncul di layar (dihitung dari
 piksel, bukan dikira-kira).
 
+Hasilnya empat berkas gambar: jendela utama pada posisi log paling bawah, jendela
+utama pada posisi paling atas, jendela Asisten AI, dan jendela Pengaturan.
+
 Jalankan:
-    xvfb-run -a --server-args="-screen 0 1200x820x24" \\
-        python3 tools/screenshot.py <folder> <keluaran.png>
+    xvfb-run -a --server-args="-screen 0 1100x760x24" \\
+        python3 tools/screenshot.py <folder> docs
 
 Di komputer biasa (ada layar) cukup:
-    python3 tools/screenshot.py <folder> <keluaran.png>
+    python3 tools/screenshot.py <folder> docs
 """
 
 import os
@@ -36,6 +39,28 @@ _dialog = mock.Mock()
 _dialog.askyesno.return_value = False
 mock.patch.object(gui, "messagebox", _dialog).start()
 mock.patch.object(dialogs, "messagebox", _dialog).start()
+
+
+def _grab(path: str, window=None) -> None:
+    """Simpan tangkapan layar, lalu pangkas tepat sebesar jendelanya.
+
+    `import -window root` menangkap seluruh layar virtual. Tanpa dipangkas,
+    gambar berisi tepi hitam selebar selisih antara ukuran jendela dan ukuran
+    layar maya - terlihat seperti gambar rusak, dan membuat teks lebih kecil
+    daripada seharusnya ketika ditampilkan di README.
+    """
+    subprocess.run(["import", "-window", "root", path], check=True)
+    if window is None:
+        return
+    try:
+        from PIL import Image
+
+        lebar, tinggi = window.winfo_width(), window.winfo_height()
+        if lebar > 1 and tinggi > 1:
+            with Image.open(path) as image:
+                image.convert("RGB").crop((0, 0, lebar, tinggi)).save(path)
+    except ImportError:
+        pass
 
 
 def main() -> int:
@@ -89,24 +114,80 @@ def main() -> int:
     # Dua kali: di posisi tergulir bawah (temuan terbaru) dan di posisi atas
     # (temuan pertama). Perlu keduanya, karena log otomatis menggulir ke bawah
     # sehingga temuan di awal tidak terlihat pada tangkapan layar pertama.
-    base, ext = os.path.splitext(out)
-    top_out = f"{base}-atas{ext or '.png'}"
+    # `out` boleh berupa folder (untuk README) atau nama berkas .png (untuk
+    # pemeriksaan cepat). Nama berkasnya ditentukan dari bentuk yang diberikan.
+    if os.path.splitext(out)[1]:
+        base, ext = os.path.splitext(out)
+        target_dir = os.path.dirname(base) or "."
+        names = {
+            "bawah": os.path.basename(base) + ext,
+            "atas": os.path.basename(base) + "-atas" + ext,
+        }
+    else:
+        target_dir = out
+        names = {
+            "bawah": "tangkapan-jendela-utama.png",
+            "atas": "tangkapan-jendela-utama-atas.png",
+        }
+    os.makedirs(target_dir, exist_ok=True)
 
     captures = []
     for label, position in (("bawah", "end"), ("atas", "1.0")):
         app.log.see(position)
         root.update()
         time.sleep(0.3)
-        target_path = out if label == "bawah" else top_out
-        subprocess.run(["import", "-window", "root", target_path], check=True)
+        target_path = os.path.join(target_dir, names[label])
+        _grab(target_path, app.root)
         captures.append((label, target_path))
         print(f"tangkapan layar ({label}) disimpan: {target_path}")
+
+    # --- Jendela Asisten AI -------------------------------------------------- #
+    # Dibuka setelah pemindaian selesai supaya bahan jawabannya sudah ada.
+    asisten = dialogs.AssistantWindow(root, app)
+    root.update()
+    asisten.ask("kenapa berkas saya ditandai?")
+    root.update()
+    time.sleep(0.4)
+    asisten_path = os.path.join(target_dir, "tangkapan-asisten-ai.png")
+    _grab(asisten_path, asisten)
+    print(f"tangkapan layar (asisten AI) disimpan: {asisten_path}")
+    asisten.destroy()
+    root.update()
+
+    # --- Jendela Pengaturan -------------------------------------------------- #
+    pengaturan = dialogs.SettingsWindow(root, app)
+    root.update()
+    # Gulir ke bawah supaya bagian kecerdasan buatan terlihat. Bagian itu ada di
+    # paling bawah jendela, jadi tanpa digulir gambar hanya menampilkan kunci
+    # MalwareBazaar - dan pembaca tidak melihat ada kemampuan AI sama sekali.
+    pengaturan.scroll_area.canvas.yview_moveto(1.0)
+    root.update()
+    time.sleep(0.4)
+    pengaturan_path = os.path.join(target_dir, "tangkapan-pengaturan.png")
+    _grab(pengaturan_path, pengaturan)
+    print(f"tangkapan layar (pengaturan) disimpan: {pengaturan_path}")
+    pengaturan.destroy()
+    root.update()
 
     # --- Hitung piksel per warna tingkat bahaya ------------------------------ #
     # Warna yang benar-benar dirender muncul puluhan piksel; warna yang tidak
     # pernah dipakai muncul nol. Ini membuktikan warna, bukan sekadar mengira.
     try:
         from PIL import Image
+
+        # Jendela yang gagal tergambar menghasilkan gambar nyaris satu warna.
+        # Angka ini menangkapnya; mata bisa saja tidak menyadarinya di layar kecil.
+        print("--- keragaman warna tiap gambar ---")
+        for label, path in [
+            ("utama bawah", captures[0][1]),
+            ("utama atas", captures[1][1]),
+            ("asisten AI", asisten_path),
+            ("pengaturan", pengaturan_path),
+        ]:
+            image = Image.open(path).convert("RGB")
+            jumlah = len(set(image.get_flattened_data()))
+            status = "OK" if jumlah > 200 else "MENCURIGAKAN - gambar hampir satu warna"
+            print(f"  {label:<12} {jumlah:>6} warna berbeda   {status}")
 
         print("--- jumlah piksel per warna tingkat bahaya ---")
         for label, path in captures:

@@ -133,6 +133,9 @@ class SettingsWindow(_BaseWindow):
     def _build(self) -> None:
         area = _ScrollArea(self, self.colors)
         area.pack(fill="both", expand=True)
+        # Disimpan agar bisa digulir dari luar - dipakai skrip tangkapan layar
+        # untuk memperlihatkan bagian kecerdasan buatan.
+        self.scroll_area = area
         outer = tk.Frame(area.body, bg=self.colors["bg"])
         outer.pack(fill="both", expand=True, padx=14, pady=12)
 
