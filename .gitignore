@@ -15,3 +15,8 @@ laporan_scanguard_*.txt
 # Catatan kerja agen. Bukan bagian dari program, dan isinya bisa menyebut
 # proyek lain yang tidak ada hubungannya dengan repositori ini.
 .openhands/
+
+# Pustaka pihak ketiga. ScanGuard memakai pustaka Python yang dipasang lewat
+# pip, bukan berkas .dll yang disalin ke repo - jadi tidak ada .dll yang perlu
+# ikut disimpan di sini.
+*.dll
